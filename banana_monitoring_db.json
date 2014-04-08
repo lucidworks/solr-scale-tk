@@ -1,0 +1,409 @@
+{
+  "title": "SolrCloud Monitoring",
+  "services": {
+    "query": {
+      "idQueue": [],
+      "list": {
+        "0": {
+          "query": "collectd_type:[* TO *]",
+          "alias": "",
+          "color": "#7EB26D",
+          "id": 0,
+          "pin": false,
+          "type": "lucene"
+        },
+        "1": {
+          "id": 1,
+          "color": "#EAB839",
+          "query": "collectd_type:load AND midterm:[0.8 TO *]",
+          "alias": "",
+          "pin": false,
+          "type": "lucene"
+        },
+        "2": {
+          "id": 2,
+          "color": "#6ED0E0",
+          "query": "collectd_type:memory",
+          "alias": "",
+          "pin": false,
+          "type": "lucene"
+        }
+      },
+      "ids": [
+        0,
+        1,
+        2
+      ]
+    },
+    "filter": {
+      "idQueue": [
+        1
+      ],
+      "list": {
+        "0": {
+          "from": "2014-04-03T15:18:51.765Z",
+          "to": "2014-04-03T15:23:51.765Z",
+          "field": "event_timestamp",
+          "type": "time",
+          "mandate": "must",
+          "active": true,
+          "alias": "",
+          "id": 0
+        }
+      },
+      "ids": [
+        0
+      ]
+    }
+  },
+  "rows": [
+    {
+      "title": "Options",
+      "height": "50px",
+      "editable": true,
+      "collapse": false,
+      "collapsable": true,
+      "panels": [
+        {
+          "title": "Set time span",
+          "error": "",
+          "span": 6,
+          "editable": true,
+          "group": [
+            "default"
+          ],
+          "type": "timepicker",
+          "mode": "relative",
+          "time_options": [
+            "5m",
+            "15m",
+            "1h",
+            "6h",
+            "12h",
+            "24h",
+            "2d",
+            "7d",
+            "30d"
+          ],
+          "timespan": "5m",
+          "timefield": "event_timestamp",
+          "timeformat": "",
+          "refresh": {
+            "enable": true,
+            "interval": 30,
+            "min": 3
+          },
+          "filter_id": 0,
+          "status": "Stable"
+        },
+        {
+          "error": false,
+          "span": 6,
+          "editable": true,
+          "type": "query",
+          "loadingEditor": false,
+          "query": "*:*",
+          "pinned": true,
+          "history": [
+            "collectd_type:memory",
+            "collectd_type:load AND midterm:[0.8 TO *]",
+            "collectd_type:[* TO *]",
+            "collectd_type:load",
+            "collectd_type:load AND midterm:[0.1 TO *]",
+            "error"
+          ],
+          "remember": 10,
+          "title": "Search",
+          "def_type": ""
+        }
+      ]
+    },
+    {
+      "title": "Alerts",
+      "height": "500",
+      "editable": true,
+      "collapse": false,
+      "collapsable": true,
+      "panels": [
+        {
+          "span": 8,
+          "editable": true,
+          "type": "histogram",
+          "loadingEditor": false,
+          "mode": "values",
+          "time_field": "event_timestamp",
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0,
+              1,
+              2
+            ],
+            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp midterm&group=true&group.field=host&group.limit=100000",
+            "custom": "&fq=collectd_type:load"
+          },
+          "max_rows": 100000,
+          "value_field": "midterm",
+          "group_field": "host",
+          "auto_int": true,
+          "resolution": 100,
+          "interval": "1s",
+          "intervals": [
+            "auto",
+            "1s",
+            "1m",
+            "5m",
+            "10m",
+            "30m",
+            "1h",
+            "3h",
+            "12h",
+            "1d",
+            "1w",
+            "1M",
+            "1y"
+          ],
+          "fill": 0,
+          "linewidth": 2,
+          "timezone": "browser",
+          "spyable": true,
+          "zoomlinks": true,
+          "bars": false,
+          "stack": true,
+          "points": false,
+          "lines": true,
+          "legend": true,
+          "x-axis": true,
+          "y-axis": true,
+          "percentage": false,
+          "interactive": true,
+          "options": true,
+          "tooltip": {
+            "value_type": "cumulative",
+            "query_as_alias": false
+          },
+          "title": "CPU Load"
+        },
+        {
+          "error": false,
+          "span": 3,
+          "editable": true,
+          "type": "filtering",
+          "loadingEditor": false,
+          "title": "Global Filters"
+        }
+      ]
+    },
+    {
+      "title": "Memory",
+      "height": "250px",
+      "editable": true,
+      "collapse": false,
+      "collapsable": true,
+      "panels": [
+        {
+          "span": 4,
+          "editable": true,
+          "type": "histogram",
+          "loadingEditor": false,
+          "mode": "values",
+          "time_field": "event_timestamp",
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0,
+              1,
+              2
+            ],
+            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp value&group=true&group.field=host&group.limit=100000",
+            "custom": "&collectd_type:memory"
+          },
+          "max_rows": 100000,
+          "value_field": "value",
+          "group_field": "host",
+          "auto_int": true,
+          "resolution": 25,
+          "interval": "10s",
+          "intervals": [
+            "auto",
+            "1s",
+            "1m",
+            "5m",
+            "10m",
+            "30m",
+            "1h",
+            "3h",
+            "12h",
+            "1d",
+            "1w",
+            "1M",
+            "1y"
+          ],
+          "fill": 0,
+          "linewidth": 3,
+          "timezone": "browser",
+          "spyable": true,
+          "zoomlinks": true,
+          "bars": false,
+          "stack": true,
+          "points": false,
+          "lines": true,
+          "legend": true,
+          "x-axis": true,
+          "y-axis": true,
+          "percentage": false,
+          "interactive": true,
+          "options": true,
+          "tooltip": {
+            "value_type": "cumulative",
+            "query_as_alias": false
+          },
+          "title": "Memory"
+        },
+        {
+          "span": 8,
+          "editable": true,
+          "type": "histogram",
+          "loadingEditor": false,
+          "mode": "values",
+          "time_field": "event_timestamp",
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0,
+              1,
+              2
+            ],
+            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp write&group=true&group.field=host&group.limit=100000",
+            "custom": "&fq=collectd_type:disk_time"
+          },
+          "max_rows": 100000,
+          "value_field": "write",
+          "group_field": "host",
+          "auto_int": true,
+          "resolution": 100,
+          "interval": "1s",
+          "intervals": [
+            "auto",
+            "1s",
+            "1m",
+            "5m",
+            "10m",
+            "30m",
+            "1h",
+            "3h",
+            "12h",
+            "1d",
+            "1w",
+            "1M",
+            "1y"
+          ],
+          "fill": 0,
+          "linewidth": 3,
+          "timezone": "browser",
+          "spyable": true,
+          "zoomlinks": true,
+          "bars": false,
+          "stack": true,
+          "points": false,
+          "lines": true,
+          "legend": true,
+          "x-axis": true,
+          "y-axis": true,
+          "percentage": false,
+          "interactive": true,
+          "options": true,
+          "tooltip": {
+            "value_type": "cumulative",
+            "query_as_alias": false
+          },
+          "title": "Disk Writes"
+        }
+      ]
+    },
+    {
+      "title": "Events",
+      "height": "350px",
+      "editable": true,
+      "collapse": false,
+      "collapsable": true,
+      "panels": [
+        {
+          "title": "All events",
+          "error": false,
+          "span": 12,
+          "editable": true,
+          "group": [
+            "default"
+          ],
+          "type": "table",
+          "size": 50,
+          "pages": 100,
+          "offset": 0,
+          "sort": [
+            "event_timestamp",
+            "desc"
+          ],
+          "style": {
+            "font-size": "9pt"
+          },
+          "overflow": "min-height",
+          "fields": [
+            "event_timestamp",
+            null,
+            "host",
+            "collectd_type",
+            "longterm",
+            "midterm",
+            "shortterm",
+            "value",
+            "type_instance",
+            "tx",
+            "rx"
+          ],
+          "highlight": [],
+          "sortable": true,
+          "header": true,
+          "paging": true,
+          "spyable": true,
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0,
+              1,
+              2
+            ],
+            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=5000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&sort=event_timestamp desc"
+          },
+          "field_list": false,
+          "status": "Stable",
+          "trimFactor": 300,
+          "normTimes": true,
+          "time_field": "event_timestamp"
+        }
+      ]
+    }
+  ],
+  "editable": true,
+  "failover": false,
+  "index": {
+    "interval": "none",
+    "pattern": "[logstash-]YYYY.MM.DD",
+    "default": "NO_TIME_FILTER_OR_INDEX_PATTERN_NOT_MATCHED"
+  },
+  "style": "light",
+  "panel_hints": true,
+  "loader": {
+    "save_gist": false,
+    "save_elasticsearch": true,
+    "save_local": true,
+    "save_default": true,
+    "save_temp": true,
+    "save_temp_ttl_enable": true,
+    "save_temp_ttl": "30d",
+    "load_gist": true,
+    "load_elasticsearch": true,
+    "load_elasticsearch_size": 20,
+    "load_local": true,
+    "hide": false
+  },
