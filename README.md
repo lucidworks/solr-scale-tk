@@ -21,11 +21,11 @@ For more information about boto, please see: https://github.com/boto/boto
 For more information about fabric, see: http://docs.fabfile.org/en/1.8/
 
 Clone the pysolr project from github and set it up as well:
-
+```
 git clone https://github.com/toastdriven/pysolr.git
 cd pysolr
 sudo python setup.py install
-
+```
 Note, you do not need to know any Python in order to use this framework.
 
 AWS Setup
@@ -45,9 +45,9 @@ The solr-scale-tk framework works off the concept of a named "cluster". The name
 Quick Demo
 
 The easiest thing to do to ensure your environment is setup correctly and the script is working is to run:
-
+```
 fab demo:demo1,n=1
-
+```
 The demo command performs the following tasks in order:
 1. Provisions one m3.medium instance in EC2
 2. Sets up the meta node (SiLK, RabbitMQ, etc)
@@ -57,19 +57,17 @@ The demo command performs the following tasks in order:
 6. Indexes 10,000 synthetic documents in the demo collection
 
 After verifying this works for you, take a moment to navigate to the Solr admin console and issue some queries against the collection. You can also go to the Solr admin console for the Solr instance that Logstash4Solr is using to index log messages from your SolrCloud nodes. After experimenting with the demo cluster, terminate the EC2 instance by doing: 
-
+```
 fab kill_mine
-
+```
 Fabric Commands
 
 The demo command is cool, but to get the most out of the solr-scale-tk framework, you need to understand a little more about what's going on behind the scenes. Here's an example of how to launch a 3-node ZooKeeper ensemble and a 4-node SolrCloud cluster that talks to the ZooKeeper ensemble.
-
+```
 fab new_zk_ensemble:zk1,n=3 
- 
 fab new_solrcloud:cloud1,n=4,zk=zk1
- 
 fab new_collection:cluster=cloud1,name=test,shards=2,rf=2
-
+```
 Running these commands will take several minutes, but if all goes well, you'll have a collection named "test" with 2 shards and 2 replicas per shard in a 4-node SolrCloud cluster named "cloud1" and a 3-node ZooKeeper ensemble named "zk1" (7 EC2 instances in total). When this command finishes, you should see a message that looks similar to: 
 
 Successfully launched new SolrCloud cluster cloud1; visit: SOLR_URL
@@ -107,30 +105,35 @@ If you see a message like this, then you know step 1 was successful and you only
 Fabric Know-How
 
 To see available commands, do:
+```
 fab -l
-
+```
 To see more information about a specific command, do:
+```
 fab -d <command>
-
+```
 Meta Node
 
 You have the option of deploying a "meta" node to support testing. The meta node is intended to run shared services, such as log aggregation with Logstash4Solr. When you spin-up a new SolrCloud cluster using the new_solrcloud command, you have the option of specifying a meta node name. If supplied, then the Solr instances will be configured to integrate their log files with the meta node. Let's see an example of this in action to make sure it is clear:
 
+```
 fab new_meta_node:metta_world_peace
- 
 fab new_solrcloud:mycloud,n=3,meta=metta_world_peace
+```
 
 Running these commands will result in 4 instances being launched: 3 for SolrCloud and 1 meta node. The Solr nodes will send WARN and more severe log messages to Logstash4Solr on the meta node. You can find log messages by going to the Solr Query form for the Solr instance that logstash4solr is using, see URL in the console output for the new_meta_node command.
+
 NOTE: The meta node is a work-in-progress, so please let us know if you have suggestions about other useful shared services we can deploy on the meta node.
 
 Patching
 
 Let's say you've spun up a cluster and need to patch the Solr core JAR file after fixing a bug. To do this, use the patch_jars command. Let's look at an example based on branch_4x. First, you need to build the JARs locally:
+```
 cd ~/dev/lw/projects/branch_4x/solr
 ant clean example
 cd ~/dev/lw/projects/solr-scale-tk
- 
 fab patch_jars:<cluster>,localSolrDir='~/dev/lw/projects/branch_4x/solr'
+```
 This will scp the solr-core-<VERS>.jar and solr-solrj-<VERS>.jar to each server, install them in the correct location for each Solr node running on the host, and then restart Solr. It performs this patch process very methodically so that you can be sure of the result. For example, after restarting, it polls the server until it comes back online to ensure the patch was successful (or not) before proceeding to the next server. Of course this implies the version value matches on your local workstation and on the server. Currently, we're using <VERS> == 4.7-SNAPSHOT.
 
 The patch_jars command also supports a few other parameters. For example, let's say you only want to patch the core JAR on the first instance in the cluster:
