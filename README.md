@@ -11,11 +11,11 @@ sudo easy_install fabric
 sudo easy_install boto
 
 Configure boto to connect to AWS by adding your credentials to: ~/.boto
- 
+```
 [Credentials]
 aws_access_key_id = ?
 aws_secret_access_key = ?
-
+```
 For more information about boto, please see: https://github.com/boto/boto
 
 For more information about fabric, see: http://docs.fabfile.org/en/1.8/
