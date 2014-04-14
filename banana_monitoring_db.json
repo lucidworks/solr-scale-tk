@@ -2,37 +2,22 @@
   "title": "SolrCloud Monitoring",
   "services": {
     "query": {
-      "idQueue": [],
+      "idQueue": [
+        1,
+        2
+      ],
       "list": {
         "0": {
-          "query": "collectd_type:[* TO *]",
+          "query": "*:*",
           "alias": "",
           "color": "#7EB26D",
           "id": 0,
           "pin": false,
           "type": "lucene"
-        },
-        "1": {
-          "id": 1,
-          "color": "#EAB839",
-          "query": "collectd_type:load AND midterm:[0.8 TO *]",
-          "alias": "",
-          "pin": false,
-          "type": "lucene"
-        },
-        "2": {
-          "id": 2,
-          "color": "#6ED0E0",
-          "query": "collectd_type:memory",
-          "alias": "",
-          "pin": false,
-          "type": "lucene"
         }
       },
       "ids": [
-        0,
-        1,
-        2
+        0
       ]
     },
     "filter": {
@@ -41,8 +26,8 @@
       ],
       "list": {
         "0": {
-          "from": "2014-04-03T15:18:51.765Z",
-          "to": "2014-04-03T15:23:51.765Z",
+          "from": "2014-04-14T21:41:04.970Z",
+          "to": "2014-04-14T21:56:04.970Z",
           "field": "event_timestamp",
           "type": "time",
           "mandate": "must",
@@ -85,7 +70,7 @@
             "7d",
             "30d"
           ],
-          "timespan": "5m",
+          "timespan": "15m",
           "timefield": "event_timestamp",
           "timeformat": "",
           "refresh": {
@@ -105,9 +90,9 @@
           "query": "*:*",
           "pinned": true,
           "history": [
-            "collectd_type:memory",
-            "collectd_type:load AND midterm:[0.8 TO *]",
             "collectd_type:[* TO *]",
+            "collectd_type:load AND midterm:[0.8 TO *]",
+            "collectd_type:memory",
             "collectd_type:load",
             "collectd_type:load AND midterm:[0.1 TO *]",
             "error"
@@ -126,7 +111,7 @@
       "collapsable": true,
       "panels": [
         {
-          "span": 8,
+          "span": 6,
           "editable": true,
           "type": "histogram",
           "loadingEditor": false,
@@ -135,19 +120,17 @@
           "queries": {
             "mode": "all",
             "ids": [
-              0,
-              1,
-              2
+              0
             ],
-            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp midterm&group=true&group.field=host&group.limit=100000",
+            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp midterm&group=true&group.field=host&group.limit=100000",
             "custom": "&fq=collectd_type:load"
           },
           "max_rows": 100000,
           "value_field": "midterm",
           "group_field": "host",
           "auto_int": true,
-          "resolution": 100,
-          "interval": "1s",
+          "resolution": 50,
+          "interval": "30s",
           "intervals": [
             "auto",
             "1s",
@@ -190,7 +173,51 @@
           "editable": true,
           "type": "filtering",
           "loadingEditor": false,
-          "title": "Global Filters"
+          "title": "Global Filters",
+          "hide": true
+        },
+        {
+          "error": false,
+          "span": 6,
+          "editable": true,
+          "type": "table",
+          "loadingEditor": false,
+          "status": "Stable",
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0
+            ],
+            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=75&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&sort=event_timestamp desc",
+            "custom": "&fq=(level:ERROR OR level:WARN)"
+          },
+          "size": 15,
+          "pages": 5,
+          "offset": 0,
+          "sort": [
+            "event_timestamp",
+            "desc"
+          ],
+          "group": "default",
+          "style": {
+            "font-size": "9pt"
+          },
+          "overflow": "min-height",
+          "fields": [
+            "event_timestamp",
+            "level",
+            "message"
+          ],
+          "highlight": [],
+          "sortable": true,
+          "header": true,
+          "paging": true,
+          "field_list": false,
+          "trimFactor": 300,
+          "normTimes": true,
+          "spyable": true,
+          "time_field": "event_timestamp",
+          "title": "Solr Errors / Warnings"
         }
       ]
     },
@@ -211,11 +238,9 @@
           "queries": {
             "mode": "all",
             "ids": [
-              0,
-              1,
-              2
+              0
             ],
-            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp value&group=true&group.field=host&group.limit=100000",
+            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp value&group=true&group.field=host&group.limit=100000",
             "custom": "&collectd_type:memory"
           },
           "max_rows": 100000,
@@ -223,7 +248,7 @@
           "group_field": "host",
           "auto_int": true,
           "resolution": 25,
-          "interval": "10s",
+          "interval": "30s",
           "intervals": [
             "auto",
             "1s",
@@ -270,11 +295,9 @@
           "queries": {
             "mode": "all",
             "ids": [
-              0,
-              1,
-              2
+              0
             ],
-            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&fl=event_timestamp write&group=true&group.field=host&group.limit=100000",
+            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp write&group=true&group.field=host&group.limit=100000",
             "custom": "&fq=collectd_type:disk_time"
           },
           "max_rows": 100000,
@@ -282,7 +305,7 @@
           "group_field": "host",
           "auto_int": true,
           "resolution": 100,
-          "interval": "1s",
+          "interval": "10s",
           "intervals": [
             "auto",
             "1s",
@@ -369,11 +392,9 @@
           "queries": {
             "mode": "all",
             "ids": [
-              0,
-              1,
-              2
+              0
             ],
-            "query": "q=collectd_type:[* TO *]&df=message&df=host&df=path&df=type&wt=json&rows=5000&fq=event_timestamp:[2014-04-03T15:18:51.765Z%20TO%202014-04-03T15:23:51.765Z]&sort=event_timestamp desc"
+            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=5000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&sort=event_timestamp desc"
           },
           "field_list": false,
           "status": "Stable",

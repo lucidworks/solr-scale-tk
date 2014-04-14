@@ -529,7 +529,7 @@ def _rolling_restart_solr(ec2, cluster, solrHostsAndPortsToRestart=None, wait=0)
         solrHostsAndPortsToRestart = {}            
         for host in hosts:
             solrHostsAndPortsToRestart[host] = set([]) # set is important
-            with settings(host_string=host), hide('output', 'warnings'):
+            with settings(host_string=host), hide('output', 'running', 'warnings'):
                 put('./solr-ctl.sh', cloudDir)
                 for port in activePorts:
                     if _fab_exists(REMOTE_SOLR_DIR + '/cloud' + port):
@@ -605,6 +605,56 @@ def _setup_instance_stores(hosts, numStores, ami, xdevs):
                     sudo('mount /vol%d' % v)
                 # grant ownership to our ssh user
                 sudo('chown -R %s: /vol%d' % (SSH_USER, v))
+
+def _integ_host_with_meta(host, metaHost):    
+    # verify if RabbitMQ is running on the meta node
+    hasMq = False
+    with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
+        try:
+            sudo('rabbitmqctl status')
+            hasMq = True
+        except:
+            hasMq = False
+    
+    # setup logging on the Solr server based on whether there is a meta host
+    # running rabbitmq and the logstash4solr stuff   
+    if hasMq:
+        log4jCfg = _gen_log4j_cfg(host, metaHost, 'INFO')
+    else:
+        log4jCfg = _gen_log4j_cfg()
+         
+    remoteLog4JPropsFile = REMOTE_USER_HOME_DIR + '/cloud/log4j.properties'
+    run('rm ' + remoteLog4JPropsFile)
+    _fab_append(remoteLog4JPropsFile, log4jCfg)
+
+    # if we're running a metanode, startup collectd with the network plugin configured
+    sudo('rm -f /etc/collectd.conf')
+    collectdNetwork = '''FQDNLookup   true
+Interval     10 
+LoadPlugin logfile
+<Plugin logfile>
+LogLevel info
+File "/var/log/collectd.log"
+Timestamp true
+PrintSeverity false
+</Plugin>
+LoadPlugin cpu
+LoadPlugin disk
+LoadPlugin interface
+LoadPlugin load
+LoadPlugin memory
+LoadPlugin network
+<Plugin network>
+<Server "'''+metaHost+'''" "25826">
+Interface "eth0"
+</Server>
+</Plugin>
+Hostname "'''+host+'''"
+'''
+    collectdConf = '/etc/collectd.conf'
+    _fab_append(collectdConf, collectdNetwork, use_sudo=True)
+    sudo('service collectd restart')
+    
 
 # -----------------------------------------------------------------------------
 # Fabric actions begin here ... anything above this are private helper methods.
@@ -821,23 +871,15 @@ export SOLR_JAVA_MEM="%s"
             run('chmod +x ' + SSTK)
 
     # upload config to ZK
-    with settings(host_string=hosts[0]): #, hide('output', 'running', 'warnings'):
+    with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         run('rm -rf '+cloudDir+'/tmp/*; mkdir -p '+cloudDir+'/tmp/cloud; cp -r '+REMOTE_SOLR_DIR+'/cloud84/solr/cloud/* '+cloudDir+'/tmp/cloud/')        
         remoteUpconfigCmd = '%s upconfig cloud' % SSTK 
         run(remoteUpconfigCmd)
 
     # support option to enable logstash4solr integration and zabbix agent
     metaHost = None
-    hasMq = False
     if meta is not None:
         metaHost = _lookup_hosts(meta, True)[0]
-        # verify if RabbitMQ is running
-        with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
-            try:
-                sudo('rabbitmqctl status')
-                hasMq = True
-            except:
-                hasMq = False
 
     # setup N Solr nodes per host using the solr-ctl.sh script to do the actual starting
     numStores = instanceStoresByType[instance_type]
@@ -846,47 +888,9 @@ export SOLR_JAVA_MEM="%s"
         
     solrHostAndPorts = []
     for host in hosts:
-        with settings(host_string=host): #, hide('output', 'running', 'warnings'):
-
-            # setup logging on the Solr server based on whether there is a meta host
-            # running rabbitmq and the logstash4solr stuff
-            if hasMq:
-                log4jCfg = _gen_log4j_cfg(host, metaHost, 'WARN')
-            else:
-                log4jCfg = _gen_log4j_cfg()
-            remoteLog4JPropsFile = REMOTE_USER_HOME_DIR + '/cloud/log4j.properties'
-            run('rm ' + remoteLog4JPropsFile)
-            _fab_append(remoteLog4JPropsFile, log4jCfg)
-
-            # if we're running a metanode, startup collectd with the network plugin configured
+        with settings(host_string=host), hide('output', 'running', 'warnings'):
             if metaHost is not None:
-                sudo('rm -f /etc/collectd.conf')
-                collectdNetwork = '''FQDNLookup   true
-Interval     20 
-LoadPlugin logfile
-<Plugin logfile>
-    LogLevel info
-    File "/var/log/collectd.log"
-    Timestamp true
-    PrintSeverity false
-</Plugin>
-LoadPlugin cpu
-LoadPlugin disk
-LoadPlugin interface
-LoadPlugin load
-LoadPlugin memory
-LoadPlugin network
-<Plugin network>
-    <Server "'''+metaHost+'''" "25826">
-        Interface "eth0"
-    </Server>
-</Plugin>
-Hostname "'''+host+'''"
-'''
-                collectdConf = '/etc/collectd.conf'
-                _fab_append(collectdConf, collectdNetwork, use_sudo=True)
-                sudo('service collectd restart')
-                sudo('service collectd restart')
+                _integ_host_with_meta(host, metaHost)
 
             for p in range(0, numNodesPerHost):
                 solrPort = str(84 + p)
@@ -1187,6 +1191,19 @@ def setup_meta_node(cluster):
 
         # configure banana
         _configure_banana(metaHost)
+        
+        # setup the data directory on /vol0 for the logstash_logs core
+        # /home/ec2-user/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs
+        run('rm -rf /vol0/logstash_logs_data; mkdir -p /vol0/logstash_logs_data')
+        coreProps = '''config=solrconfig.xml
+name=logstash_logs
+schema=schema.xml
+shard=
+dataDir=/vol0/logstash_logs_data
+collection=        
+'''
+        run('rm -f '+REMOTE_USER_HOME_DIR+'/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs/core.properties')
+        _fab_append(REMOTE_USER_HOME_DIR+'/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs/core.properties', coreProps)        
 
         # start solr for logstash
         startLogstashSolrServer = REMOTE_USER_HOME_DIR + '/slk-4.7.0/solr-4.7.0/SiLK/silk-ctl.sh start'
@@ -1782,6 +1799,24 @@ def jmeter(srvr,jmxfile):
         put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
         put(jmxfile, REMOTE_USER_HOME_DIR)
         run('%s/bin/jmeter -n -t %s' % (jmeterDir, jmxfile))
+
+def attach_to_meta_node(cluster,meta):    
+    """
+    Configures existing SolrCloud nodes to attach to an existing meta node. This command
+    is useful if you add a meta node after starting a SolrCloud cluster.
+    """
+    metaHost = _lookup_hosts(meta, True)[0]
+    if metaHost is None:
+        _fatal('Meta node '+meta+' not found!')
+        
+    ec2 = _connect_ec2()    
+    hosts = _aws_cluster_hosts(ec2, cluster)    
+    for host in hosts:
+        with settings(host_string=host), hide('output', 'running', 'warnings'):
+            _integ_host_with_meta(host, metaHost)
+    # restart each Solr node, waiting to see them come back up
+    _rolling_restart_solr(ec2, cluster, None, 0)
+    ec2.close()
     
 
 def custom_ami(cluster):
