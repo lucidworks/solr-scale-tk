@@ -12,3 +12,7 @@ hs_err_pid*
 .project
 .settings
 .pydevproject
+.idea
+*.iml
+*.pyc
+
