@@ -1788,17 +1788,33 @@ def reload_collection(cluster,collection):
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
     
-def jmeter(srvr,jmxfile):    
+def jmeter(srvr,jmxfile,propertyfile=None,depsfolder=None,runname='jmeter-test'):
     """
     Upload and run a JMeter test plan against your cluster.
     """
     ec2 = _connect_ec2()    
     hosts = _aws_cluster_hosts(ec2, srvr)    
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
+    jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
     with settings(host_string=hosts[0]):
-        put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
-        put(jmxfile, REMOTE_USER_HOME_DIR)
-        run('%s/bin/jmeter -n -t %s' % (jmeterDir, jmxfile))
+        run ('mkdir -p %s/deps' % jmeterTestDir)
+        # put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
+        if propertyfile is not None:
+            put (propertyfile, '%s/.' % jmeterTestDir)
+        if depsfolder is not None:
+            listing = os.listdir(depsfolder)
+            print 'dependencies = %s' % listing
+            for jar in listing:
+                put (os.path.join(depsfolder, jar), '%s/deps/' % jmeterTestDir)
+        put(jmxfile, jmeterTestDir)
+        jmxFileName = os.path.basename(jmxfile)
+        if propertyfile is not None:
+            propFileName = os.path.basename(propertyfile)
+            with cd(jmeterTestDir):
+                run('%s/bin/jmeter -q %s -n -t %s' % (jmeterDir, propFileName, jmxFileName))
+        else:
+            with cd(jmeterTestDir):
+                run('%s/bin/jmeter -n -t %s' % (jmeterDir, jmxFileName))
 
 def attach_to_meta_node(cluster,meta):    
     """
