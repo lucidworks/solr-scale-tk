@@ -1797,15 +1797,16 @@ def jmeter(srvr,jmxfile,propertyfile=None,depsfolder=None,runname='jmeter-test')
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
     jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
     with settings(host_string=hosts[0]):
-        run ('mkdir -p %s/deps' % jmeterTestDir)
+        run ('mkdir -p %s' % jmeterTestDir)
         # put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
         if propertyfile is not None:
             put (propertyfile, '%s/.' % jmeterTestDir)
         if depsfolder is not None:
-            listing = os.listdir(depsfolder)
-            print 'dependencies = %s' % listing
-            for jar in listing:
-                put (os.path.join(depsfolder, jar), '%s/deps/' % jmeterTestDir)
+            local ('tar -cvf dependencies.tar.gz -C %s %s' % (os.path.dirname(os.path.abspath(depsfolder)), os.path.basename(os.path.abspath(depsfolder))))
+            put ('dependencies.tar.gz', jmeterTestDir)
+            with cd(jmeterTestDir):
+                run ('tar -xvf dependencies.tar.gz')
+            local ('rm dependencies.tar.gz')
         put(jmxfile, jmeterTestDir)
         jmxFileName = os.path.basename(jmxfile)
         if propertyfile is not None:
