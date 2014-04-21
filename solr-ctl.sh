@@ -149,7 +149,6 @@ if [ "$MODE" == "setup" ]; then
   rm -rf $SOLR_TOP/cloud$SOLR_PORT/logs/*
   rm -rf $SOLR_TOP/cloud$SOLR_PORT/solr/*shard*
   
-  mkdir -p $SOLR_TOP/cloud$SOLR_PORT/solr/lib
   cp ~/rabbitmq/jars/*.jar $SOLR_TOP/cloud$SOLR_PORT/lib/ext/
   
   exit 0

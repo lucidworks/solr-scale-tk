@@ -34,7 +34,11 @@ SSH_KEYFILE_PATH_ON_LOCAL = '~/.ssh/solr-scale-tk.pem'
 REMOTE_ZK_DIR = REMOTE_USER_HOME_DIR + '/zookeeper-3.4.5'
 REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.7.1'
 REMOTE_SOLR_JAVA_HOME = REMOTE_USER_HOME_DIR + '/jdk1.7.0_25'
-SSTK = REMOTE_USER_HOME_DIR + '/cloud/solr-ctl.sh'
+CLOUD_DIR = REMOTE_USER_HOME_DIR + '/cloud'
+CTL_SCRIPT = 'solr-ctl.sh'
+ENV_SCRIPT = 'solr-ctl-env.sh'
+SSTK = CLOUD_DIR + '/' + CTL_SCRIPT
+SSTK_ENV = CLOUD_DIR + '/' + ENV_SCRIPT  
 
 instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8 }
 
@@ -501,10 +505,9 @@ def _parse_env_data(envData):
     
 def _read_cloud_env(ec2, cluster):
     hosts = _aws_cluster_hosts(ec2, cluster)
-    cloudEnvFile = REMOTE_USER_HOME_DIR + '/cloud/solr-ctl-env.sh'
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         cloudEnvReader = _strio()
-        get(cloudEnvFile, cloudEnvReader)
+        get(SSTK_ENV, cloudEnvReader)
         envData = cloudEnvReader.getvalue()
     return _parse_env_data(envData)
     
@@ -522,15 +525,13 @@ def _rolling_restart_solr(ec2, cluster, solrHostsAndPortsToRestart=None, wait=0)
         for n in range(0,numNodes):
             activePorts.append(str(84 + n))
     
-        # upload the latest version of the solr-ctl.sh script before restarting    
-        cloudDir = REMOTE_USER_HOME_DIR + '/cloud'
-        
+        # upload the latest version of the script before restarting    
         # determine the active Solr nodes on each host
         solrHostsAndPortsToRestart = {}            
         for host in hosts:
             solrHostsAndPortsToRestart[host] = set([]) # set is important
             with settings(host_string=host), hide('output', 'running', 'warnings'):
-                put('./solr-ctl.sh', cloudDir)
+                put('./'+CTL_SCRIPT, CLOUD_DIR)
                 for port in activePorts:
                     if _fab_exists(REMOTE_SOLR_DIR + '/cloud' + port):
                         solrHostsAndPortsToRestart[host].add(port)
@@ -850,7 +851,6 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
     solrJavaMemOpts = _get_solr_java_memory_opts(instance_type, numNodesPerHost)
 
     # make sure the solr-scale-tk shell scripts are up-to-date on the remote servers
-    cloudDir = REMOTE_USER_HOME_DIR + '/cloud'
     exportCloudEnv = ('''#!/bin/bash
 export SOLR_JAVA_HOME="%s"
 export SOLR_TOP="%s"
@@ -861,18 +861,17 @@ export NODES_PER_HOST=%d
 export SOLR_JAVA_MEM="%s"
 ''' % (REMOTE_SOLR_JAVA_HOME, REMOTE_SOLR_DIR, zkHost, cluster, numNodesPerHost, solrJavaMemOpts))
     
-    remoteCloudEnvSh = cloudDir + '/solr-ctl-env.sh'
     for host in hosts:
         with settings(host_string=host), hide('output', 'running', 'warnings'):
-            run('rm -f ' + remoteCloudEnvSh)
-            _fab_append(remoteCloudEnvSh, exportCloudEnv)
-            run('chmod +x ' + remoteCloudEnvSh)
-            put('./solr-ctl.sh', cloudDir)
+            run('rm -f ' + SSTK_ENV)
+            _fab_append(SSTK_ENV, exportCloudEnv)
+            run('chmod +x ' + SSTK_ENV)
+            put('./'+CTL_SCRIPT, CLOUD_DIR)
             run('chmod +x ' + SSTK)
 
     # upload config to ZK
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
-        run('rm -rf '+cloudDir+'/tmp/*; mkdir -p '+cloudDir+'/tmp/cloud; cp -r '+REMOTE_SOLR_DIR+'/cloud84/solr/cloud/* '+cloudDir+'/tmp/cloud/')        
+        run('rm -rf '+CLOUD_DIR+'/tmp/*; mkdir -p '+CLOUD_DIR+'/tmp/cloud; cp -r '+REMOTE_SOLR_DIR+'/cloud84/solr/cloud/* '+CLOUD_DIR+'/tmp/cloud/')        
         remoteUpconfigCmd = '%s upconfig cloud' % SSTK 
         run(remoteUpconfigCmd)
 
@@ -881,7 +880,7 @@ export SOLR_JAVA_MEM="%s"
     if meta is not None:
         metaHost = _lookup_hosts(meta, True)[0]
 
-    # setup N Solr nodes per host using the solr-ctl.sh script to do the actual starting
+    # setup N Solr nodes per host using the script to do the actual starting
     numStores = instanceStoresByType[instance_type]
     if numStores is None:
         numStores = 1
@@ -1364,7 +1363,7 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
     e.g. for a collection named 'cloud1' with 4 shards running in a cluster named 'foo', 
     you will have:
     
-    s3://solr-scale-tk/foo_cloud1/
+    s3://bucket/foo_cloud1/
       -> shard1/snapshot
       -> shard2/snapshot
       -> shard3/snapshot
@@ -1488,7 +1487,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     
     # collect the replica information for each shard for the collection we're restoring data into
     with settings(host_string=hosts[0]), hide('output','running'):
-        run('source ~/cloud/solr-ctl-env.sh; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % REMOTE_SOLR_DIR)        
+        run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % REMOTE_SOLR_DIR)        
         get('/tmp/clusterstate.json', './clusterstate.json')    
         # parse the clusterstate.json to get the shard leader node assignments
         _status('Fetching /clusterstate.json to get shard leader node assignments for '+collection)
@@ -1498,7 +1497,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
         if clusterState.has_key(collection) is False:
             # assume an external collection
             _warn('Collection '+collection+' not found in /clusterstate.json, looking for external state ...')
-            run('source ~/cloud/solr-ctl-env.sh; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /collections/%s/state /tmp/state.json' % (REMOTE_SOLR_DIR,collection))
+            run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /collections/%s/state /tmp/state.json' % (REMOTE_SOLR_DIR,collection))
             get('/tmp/state.json', './state.json')
             clusterStateFile = open('./state.json')
             clusterState = json.load(clusterStateFile)   
@@ -1851,7 +1850,6 @@ def attach_to_meta_node(cluster,meta):
     _rolling_restart_solr(ec2, cluster, None, 0)
     ec2.close()
     
-
 def custom_ami(cluster):
     """
     TODO: This task is still under construction!
