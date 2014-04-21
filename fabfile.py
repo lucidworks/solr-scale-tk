@@ -1788,14 +1788,30 @@ def reload_collection(cluster,collection):
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
     
-def jmeter(srvr,jmxfile,propertyfile=None,depsfolder=None,runname='jmeter-test'):
+def jmeter(cluster,jmxfile,zk=None,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
     """
     Upload and run a JMeter test plan against your cluster.
     """
     ec2 = _connect_ec2()    
-    hosts = _aws_cluster_hosts(ec2, srvr)    
+    hosts = _aws_cluster_hosts(ec2, cluster)
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
     jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
+
+    if zk is None:
+        _warn('No ZK ensemble name specified, assuming same as cluster name')
+        zk = cluster
+    if collection is None:
+        _warn('No collection name specified, assuming same as cluster name')
+        collection = cluster
+
+    zkHosts = _get_zk_hosts(ec2, zk)
+    if zkHosts is None or len(zkHosts) == 0:
+        _error('Failed to find zkHosts')
+    # chroot the znodes for this cluster
+    zkHosts = [a + ('/' + cluster) for a in zkHosts]
+    zkHostStr = ','.join(zkHosts)
+    _info("Using ZK host string: %s" % zkHostStr)
+
     with settings(host_string=hosts[0]):
         run ('mkdir -p %s' % jmeterTestDir)
         # put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
@@ -1812,10 +1828,10 @@ def jmeter(srvr,jmxfile,propertyfile=None,depsfolder=None,runname='jmeter-test')
         if propertyfile is not None:
             propFileName = os.path.basename(propertyfile)
             with cd(jmeterTestDir):
-                run('%s/bin/jmeter -q %s -n -t %s' % (jmeterDir, propFileName, jmxFileName))
+                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -q %s -n -t %s' % (collection, zkHostStr, jmeterDir, propFileName, jmxFileName))
         else:
             with cd(jmeterTestDir):
-                run('%s/bin/jmeter -n -t %s' % (jmeterDir, jmxFileName))
+                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -n -t %s' % (collection, zkHostStr, jmeterDir, jmxFileName))
 
 def attach_to_meta_node(cluster,meta):    
     """
