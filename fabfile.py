@@ -1806,9 +1806,9 @@ def jmeter(cluster,jmxfile,zk=None,collection=None,propertyfile=None,depsfolder=
     zkHosts = _get_zk_hosts(ec2, zk)
     if zkHosts is None or len(zkHosts) == 0:
         _error('Failed to find zkHosts')
-    # chroot the znodes for this cluster
-    zkHosts = [a + ('/' + cluster) for a in zkHosts]
     zkHostStr = ','.join(zkHosts)
+    # chroot the znodes for this cluster
+    zkHostStr += ('/' + cluster)
     _info("Using ZK host string: %s" % zkHostStr)
 
     with settings(host_string=hosts[0]):
