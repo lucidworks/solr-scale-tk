@@ -788,6 +788,7 @@ def new_ec2_instances(cluster,
         _fatal('Failed to verify SSH connectivity to all hosts!')
 
     # mount the instance stores on /vol#
+    _status('Making instance store file systems ...')
     _setup_instance_stores(hosts, numStores, ami, xdevs)
                     
     # setup for using s3cmd to put / get files to / from S3 
@@ -1455,37 +1456,69 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
     
     
 
-def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',alreadyDownloaded=0):
+def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',alreadyDownloaded=0,ebsVol=None,ebsMount='/ebs0'):
     """
     Restores an index from backup into an existing collection with the same number of shards
-    """
-    # download from s3 to one of the nodes
-    # use the meta file to determine shard locations
-    s3conn = boto.connect_s3()
-    rootBucket = s3conn.get_bucket(bucket)
-    backup = '%s/%s' % (bucket, backup_name)
-    pfx = backup_name+'/'
-    _status('Validating backup at s3://%s' % backup)
-    foundIt = False
-    for key in rootBucket.list():
-        if key.name.startswith(pfx):
-            foundIt = True
-            break
-    if foundIt is False:
-        _fatal(backup+' not found in S3!')
-
-    shardDirs = {}
-            
+    """    
     ec2 = _connect_ec2()    
     hosts = _aws_cluster_hosts(ec2, cluster)
-
-    # keeps track of which hosts have shard data we're restoring
-    hostShardMap = {}
     
     needsDownload = True if int(alreadyDownloaded) == 0 else False
     print('Needs download? '+str(needsDownload))    
     
+    ebsHost = None
+    backupOnEbs = None
+    if ebsVol is not None:
+        # find the instance ID of the first host
+        instId = None
+        for rsrv in ec2.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster}):
+            for inst in rsrv.instances:
+                if inst.public_dns_name == hosts[0]:
+                    instId = inst.id
+        
+        if instId is None:
+            _fatal('Could not determine the instance ID for '+hosts[0])
+        
+        with settings(host_string=hosts[0]):
+            ec2.attach_volume(ebsVol, instId, '/dev/xvdj')
+            sudo('lsblk')
+            sudo('mkdir -p ' + ebsMount)
+            sudo('mount /dev/xvdj ' + ebsMount)
+            sudo('chown -R %s: %s' % (SSH_USER,ebsMount))
+            ebsHost = hosts[0]
+            run('df -h')
+            
+            backupOnEbs = ebsMount+'/'+backup_name
+            if _fab_exists(backupOnEbs):
+                ebsHost = hosts[0]
+                needsDownload = False
+                _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
+            else:
+                _fatal('EBS backup '+backupOnEbs+' not found on '+hosts[0])
+    
+    
+    # download from s3 to one of the nodes
+    # use the meta file to determine shard locations
+    backup = None
+    if bucket is not None:
+        s3conn = boto.connect_s3()
+        rootBucket = s3conn.get_bucket(bucket)
+        backup = '%s/%s' % (bucket, backup_name)
+        pfx = backup_name+'/'
+        _status('Validating backup at s3://%s' % backup)
+        foundIt = False
+        for key in rootBucket.list():
+            if key.name.startswith(pfx):
+                foundIt = True
+                break
+        if foundIt is False:
+            _fatal(backup+' not found in S3!')
+            
+    # keeps track of which hosts have shard data we're restoring
+    hostShardMap = {}
+        
     # collect the replica information for each shard for the collection we're restoring data into
+    shardDirs = {}
     with settings(host_string=hosts[0]), hide('output','running'):
         run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % REMOTE_SOLR_DIR)        
         get('/tmp/clusterstate.json', './clusterstate.json')    
@@ -1569,14 +1602,20 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     else:
         # need to find where the downloaded files live
         for shard in shardDirs.keys():
-            for host in hosts:
-                with settings(host_string=host): #, hide('output', 'running', 'warnings'):
-                    found = run('find /vol0/restore/'+backup_name+' -name '+shard+' -type d | wc -l')
-                    numFound = int(found)
-                    if numFound > 0:
-                        if hostShardMap.has_key(host) is False:
-                            hostShardMap[host] = []
-                        hostShardMap[host].append(shard)
+            if ebsHost is None:
+                for host in hosts:
+                    with settings(host_string=host):
+                        found = run('find /vol0/restore/'+backup_name+' -name '+shard+' -type d | wc -l')
+                        numFound = int(found)
+                        if numFound > 0:
+                            if hostShardMap.has_key(host) is False:
+                                hostShardMap[host] = []
+                            hostShardMap[host].append(shard)
+            else:
+                if hostShardMap.has_key(ebsHost) is False:
+                    hostShardMap[ebsHost] = []
+                hostShardMap[ebsHost].append(shard)
+                
 
         _info('hostShardMap: ')
         print(json.dumps(hostShardMap, indent=2))
@@ -1601,6 +1640,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                 # untar all the downloaded shardN.tar files on this host
                 #if needsDownload:            
                 #run('cd /vol0/restore/%s; cat %s-tgz-* | tar xz; rm -f %s-tgz-*' % (backup_name, shard, shard))
+                restoreFromDir = '/vol0/restore/'+backup_name if backupOnEbs is None else backupOnEbs
                             
                 replicas = shardDirs[shard]
                 for r in replicas:                
@@ -1613,8 +1653,9 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                                   (SSH_KEYFILE_PATH_ON_LOCAL, SSH_USER, shardHost, coreDir, coreDir, coreDir))
                         run(sshCmd)
                         _status('scp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        scpCmd = ('scp -o StrictHostKeyChecking=no -r -i %s /vol0/restore/%s/%s/* %s@%s:%s/data/index' % 
-                                  (SSH_KEYFILE_PATH_ON_LOCAL, backup_name, shard, SSH_USER, shardHost, coreDir))
+                        
+                        scpCmd = ('scp -o StrictHostKeyChecking=no -r -i %s %s/%s/* %s@%s:%s/data/index' % 
+                                  (SSH_KEYFILE_PATH_ON_LOCAL, restoreFromDir, shard, SSH_USER, shardHost, coreDir))
                         run(scpCmd)
     
                 for r in replicas:
@@ -1623,8 +1664,8 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                     if shardHost == host:
                         # local copy to replica
                         _status('cp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        moveCmd = ('mv %s/data/index %s/data/index-old; cp -r /vol0/restore/%s/%s/* %s/data/index; rm -rf %s/data/tlog/*' % 
-                                   (coreDir, coreDir, backup_name, shard, coreDir, coreDir))
+                        moveCmd = ('mv %s/data/index %s/data/index-old; cp -r %s/%s/* %s/data/index; rm -rf %s/data/tlog/*' % 
+                                   (coreDir, coreDir, restoreFromDir, shard, coreDir, coreDir))
                         run(moveCmd)                        
                 
     _status('Restore index data complete ... reloading collection: '+collection)          
