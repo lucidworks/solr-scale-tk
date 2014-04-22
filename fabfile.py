@@ -1787,7 +1787,7 @@ def reload_collection(cluster,collection):
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
     
-def jmeter(cluster,jmxfile,zk=None,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
+def jmeter(cluster,jmxfile,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
     """
     Upload and run a JMeter test plan against your cluster.
     """
@@ -1796,19 +1796,12 @@ def jmeter(cluster,jmxfile,zk=None,collection=None,propertyfile=None,depsfolder=
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
     jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
 
-    if zk is None:
-        _warn('No ZK ensemble name specified, assuming same as cluster name')
-        zk = cluster
     if collection is None:
         _warn('No collection name specified, assuming same as cluster name')
         collection = cluster
 
-    zkHosts = _get_zk_hosts(ec2, zk)
-    if zkHosts is None or len(zkHosts) == 0:
-        _error('Failed to find zkHosts')
-    zkHostStr = ','.join(zkHosts)
-    # chroot the znodes for this cluster
-    zkHostStr += ('/' + cluster)
+    cloudEnv = _read_cloud_env(ec2, cluster)
+    zkHostStr = cloudEnv['ZK_HOST']
     _info("Using ZK host string: %s" % zkHostStr)
 
     with settings(host_string=hosts[0]):
