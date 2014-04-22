@@ -1795,6 +1795,8 @@ def jmeter(cluster,jmxfile,collection=None,propertyfile=None,depsfolder=None,run
     hosts = _aws_cluster_hosts(ec2, cluster)
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
     jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
+    jmeterTestLogDir = '%s/logs' % jmeterTestDir
+    jmeterTestLogFile = '%s/jmeter.log' % jmeterTestLogDir
 
     if collection is None:
         _warn('No collection name specified, assuming same as cluster name')
@@ -1805,7 +1807,7 @@ def jmeter(cluster,jmxfile,collection=None,propertyfile=None,depsfolder=None,run
     _info("Using ZK host string: %s" % zkHostStr)
 
     with settings(host_string=hosts[0]):
-        run ('mkdir -p %s' % jmeterTestDir)
+        run ('mkdir -p %s' % jmeterTestLogDir)
         # put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
         if propertyfile is not None:
             put (propertyfile, '%s/.' % jmeterTestDir)
@@ -1820,10 +1822,11 @@ def jmeter(cluster,jmxfile,collection=None,propertyfile=None,depsfolder=None,run
         if propertyfile is not None:
             propFileName = os.path.basename(propertyfile)
             with cd(jmeterTestDir):
-                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -q %s -n -t %s' % (collection, zkHostStr, jmeterDir, propFileName, jmxFileName))
+                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -q %s -n -t %s -j %s' % (collection, zkHostStr, jmeterDir, propFileName, jmxFileName, jmeterTestLogFile))
         else:
             with cd(jmeterTestDir):
-                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -n -t %s' % (collection, zkHostStr, jmeterDir, jmxFileName))
+                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -n -t %s -j %s' % (collection, zkHostStr, jmeterDir, jmxFileName, jmeterTestLogFile))
+        get(jmeterTestLogDir, '.')
 
 def attach_to_meta_node(cluster,meta):    
     """
