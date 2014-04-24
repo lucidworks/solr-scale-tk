@@ -1787,22 +1787,27 @@ def reload_collection(cluster,collection):
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
     
-def jmeter(cluster,jmxfile,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
+def jmeter(solrCluster,jmxfile,jmeterCluster=None,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
     """
     Upload and run a JMeter test plan against your cluster.
     """
-    ec2 = _connect_ec2()    
-    hosts = _aws_cluster_hosts(ec2, cluster)
     jmeterDir = '%s/jmeter-2.11' % REMOTE_USER_HOME_DIR
     jmeterTestDir = '%s/%s' % (REMOTE_USER_HOME_DIR, runname)
     jmeterTestLogDir = '%s/logs' % jmeterTestDir
     jmeterTestLogFile = '%s/jmeter.log' % jmeterTestLogDir
 
     if collection is None:
-        _warn('No collection name specified, assuming same as cluster name')
-        collection = cluster
+        _warn('No collection name specified, assuming same as solr cluster name')
+        collection = solrCluster
+    if jmeterCluster is None:
+        _warn('No jmeter cluster name specified, assuming same as solr cluster name')
+        jmeterCluster = solrCluster
 
-    cloudEnv = _read_cloud_env(ec2, cluster)
+    ec2 = _connect_ec2()
+    hosts = _aws_cluster_hosts(ec2, jmeterCluster)
+    _info('Preparing to execute jmeter tests on cluster = %s and host = %s' % (jmeterCluster, hosts[0]))
+
+    cloudEnv = _read_cloud_env(ec2, solrCluster)
     zkHostStr = cloudEnv['ZK_HOST']
     _info("Using ZK host string: %s" % zkHostStr)
 
