@@ -236,13 +236,14 @@ def _gen_log4j_cfg(localId=None, rabbitMqHost=None, mqLevel='WARN'):
 
     cfg += '''
 log4j.appender.file=org.apache.log4j.RollingFileAppender
-log4j.appender.file.MaxFileSize=50MB
-log4j.appender.file.MaxBackupIndex=10
+log4j.appender.file.MaxFileSize=200MB
+log4j.appender.file.MaxBackupIndex=20
 log4j.appender.file.File=logs/solr.log
 log4j.appender.file.layout=org.apache.log4j.PatternLayout
 log4j.appender.file.layout.ConversionPattern=%d{ISO8601} [%t] %-5p %c{3} %x - %m%n
 log4j.logger.org.apache.zookeeper=WARN
 log4j.logger.org.apache.http=WARN
+log4j.logger.org.apache.solr.update.processor.LogUpdateProcessor=WARN
 '''
 
     if rabbitMqHost is not None:
@@ -353,6 +354,7 @@ def _wait_to_see_solr_up_on_hosts(hostAndPorts, maxWait=180):
     startedAt = time.time()
     allUp = False
     upSet = set([])
+    downSet = set([])
     while allUp is False and waitTime < maxWait:
         # assume all are up at the beginning of each loop and then prove false if we see one that isn't
         allUp = True
@@ -360,8 +362,13 @@ def _wait_to_see_solr_up_on_hosts(hostAndPorts, maxWait=180):
             if (srvr in upSet) is False:
                 if _is_solr_up(srvr):
                     upSet.add(srvr)
+                    try:
+                        downSet.remove(srvr)
+                    except:
+                        pass                    
                 else:
                     allUp = False
+                    downSet.add(srvr)
 
 
         # sleep a little between loops to give the servers time to start
@@ -372,7 +379,9 @@ def _wait_to_see_solr_up_on_hosts(hostAndPorts, maxWait=180):
     if allUp:
         _info('%d Solr servers are up!' % len(upSet))
     else:
-        _warn('Only %d of %d Solr servers came up within %d seconds.' % (len(upSet), len(hostAndPorts), maxWait))
+        _error('Only %d of %d Solr servers came up within %d seconds.' % (len(upSet), len(hostAndPorts), maxWait))
+        for down in downSet:
+            _error(down+' is down!')
 
 def _restart_solr(host, solrPort):
     remoteStartCmd = '%s restart %s' % (SSTK, solrPort) 
@@ -620,7 +629,7 @@ def _integ_host_with_meta(host, metaHost):
     # setup logging on the Solr server based on whether there is a meta host
     # running rabbitmq and the logstash4solr stuff   
     if hasMq:
-        log4jCfg = _gen_log4j_cfg(host, metaHost, 'INFO')
+        log4jCfg = _gen_log4j_cfg(host, metaHost, 'WARN')
     else:
         log4jCfg = _gen_log4j_cfg()
          
@@ -666,7 +675,8 @@ def new_ec2_instances(cluster,
                     instance_type=AWS_INSTANCE_TYPE,
                     ami=AWS_AMI_ID,
                     key=AWS_KEY_NAME,
-                    numInstanceStores=None):
+                    numInstanceStores=None,
+                    az='us-east-1b'):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -760,7 +770,8 @@ def new_ec2_instances(cluster,
                              key_name=key,
                              security_groups=[AWS_SECURITY_GROUP],
                              block_device_map=bdm,
-                             monitoring_enabled=True)
+                             monitoring_enabled=True,
+                             placement=az)
 
     time.sleep(3) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
@@ -788,7 +799,7 @@ def new_ec2_instances(cluster,
         _fatal('Failed to verify SSH connectivity to all hosts!')
 
     # mount the instance stores on /vol#
-    _status('Making instance store file systems ...')
+    _status('Making instance store file systems ... please be patient')
     _setup_instance_stores(hosts, numStores, ami, xdevs)
                     
     # setup for using s3cmd to put / get files to / from S3 
@@ -951,13 +962,16 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
       collection stats
     """
 
-    hosts = _lookup_hosts(cluster, False)
-
+    ec2 = _connect_ec2()
+    hosts = _aws_cluster_hosts(ec2, cluster)
+    numNodes = _num_solr_nodes_per_host(ec2, cluster)    
+    ec2.close()    
+    nodes = len(hosts) * numNodes
     replicas = int(rf) * int(shards)
-    maxShardsPerNode = int(max(1, round(replicas / len(hosts))))    
+    maxShardsPerNode = int(max(1, round(replicas / nodes)))
+    _info('%d cores across %d nodes requires maxShardsPerNode=%d' % (replicas, nodes, maxShardsPerNode))
     ext = 'false' if external is None else 'true'
 
-    # TODO: validate the maxShardsPerNode config
     createAction = ('http://%s:8984/solr/admin/collections?action=CREATE&name=%s&replicationFactor=%s&numShards=%s&collection.configName=%s&maxShardsPerNode=%s&external=%s' %
          (hosts[0], name, str(rf), str(shards), conf, str(maxShardsPerNode), ext))
 
@@ -1404,16 +1418,17 @@ def deploy_config(cluster,localConfigDir,configName):
     with settings(host_string=hosts[0]):
         remoteDir = REMOTE_USER_HOME_DIR+'/cloud/tmp/'+configName
         run('rm -rf '+remoteDir)
-        run('mkdir '+remoteDir)
+        run('mkdir -p '+remoteDir)
         put(localConfigDir, remoteDir)
+        run('cd '+remoteDir+'; find . -type d -exec mv {} conf \;')
         run(SSTK + ' upconfig ' + configName)
 
-def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
+def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
     """
     Backup an existing collection to S3 using the replication handler's snapshot support.
     Take a snapshot of each shard leader's index, tar up the files, and ship to S3.
     
-    Result is a directory under the s3://solr-scale-tk/ bucket containing a directory per shard
+    Result is a directory under the s3://solr-scale-tk/ bucket containing a tar file per shard
     e.g. for a collection named 'cloud1' with 4 shards running in a cluster named 'foo', 
     you will have:
     
@@ -1426,12 +1441,13 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
     """
     # Verify the S3 bucket is usable
     pfx = cluster+'_'+collection+'/'
-    _status('Setting up S3 bucket: %s/%s' % (bucket,pfx))
-    s3conn = boto.connect_s3()
-    rootBucket = s3conn.get_bucket(bucket)    
-    for key in rootBucket.list():
-        if key.name.startswith(pfx):
-            key.delete()
+    if ebs is None:
+        _status('Setting up S3 bucket: %s/%s' % (bucket,pfx))
+        s3conn = boto.connect_s3()
+        rootBucket = s3conn.get_bucket(bucket)    
+        for key in rootBucket.list():
+            if key.name.startswith(pfx):
+                key.delete()
     
     dryRun = str(dry_run) == '1'
     if dryRun:
@@ -1442,7 +1458,7 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
     hosts = _aws_cluster_hosts(ec2, cluster)
     numNodes = _num_solr_nodes_per_host(ec2, cluster)    
     for host in hosts:
-        with settings(host_string=host):
+        with settings(host_string=host), hide('output', 'running', 'warnings'):
             for n in range(0,numNodes):                
                 solrPort = str(84+n)
                 backupDir = '%s/cloud%s/solr/backups/%s' % (REMOTE_SOLR_DIR, solrPort, collection)
@@ -1458,26 +1474,62 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
     cmd = './tools.sh backup -backupDir %s -collection %s -zkHost %s' % (backupDirOnRemoteHost, collection, zkHost)    
     if dryRun is False:
         local(cmd)
+        pass
     else:
         _info('local( '+cmd+' )')
     
-    for h in range(0,len(hosts)):
-        host = hosts[h]
-        with settings(host_string=host): #, hide('output', 'running', 'warnings'):                        
-            for n in range(0,numNodes):                
-                solrPort = str(84+n)
-                backupDir = '%s/cloud%s/solr/backups/%s' % (REMOTE_SOLR_DIR, solrPort, collection)
-                tars2s3 = '#!/bin/bash\n'
-                #tars2s3 += 'cd '+backupDir+'; find . -name "shard*" -exec sh -c "tar cz {} | split -b 1G - {}-tgz-" \;\n'
-                #tars2s3 += 'find . -name "shard*-tgz-*" -exec s3cmd --progress put {} s3://solr-scale-tk/%s \;\n' % pfx
-                tars2s3 += 'cd '+backupDir+';'
-                tars2s3 += 'find . -name "shard*" -type d -exec s3cmd --progress --recursive put {} s3://solr-scale-tk/%s \;\n' % pfx
-                run('rm -f '+backupDir+'/s3put.sh') 
-                _fab_append(backupDir+'/s3put.sh', tars2s3)
+    if ebs is None:
+        # S3 approach
+        _status('Preparing to backup to S3 ...')
+        for h in range(0,len(hosts)):
+            host = hosts[h]
+            with settings(host_string=host), hide('output', 'running', 'warnings'):  
+                for n in range(0,numNodes):                
+                    solrPort = str(84+n)
+                    backupDir = '%s/cloud%s/solr/backups/%s' % (REMOTE_SOLR_DIR, solrPort, collection)
+                    tars2s3 = '#!/bin/bash\n'
+                    tars2s3 += 'cd '+backupDir+';'
+                    tars2s3 += 'find . -name "shard*" -type d -exec s3cmd --progress --recursive put {} s3://solr-scale-tk/%s \;\n' % pfx
+                    run('rm -f '+backupDir+'/s3put.sh')
+                    _fab_append(backupDir+'/s3put.sh', tars2s3)
+                    if dryRun is False:
+                        if ebs is not None:
+                            put(SSH_KEYFILE_PATH_ON_LOCAL, '%s/.ssh' % REMOTE_USER_HOME_DIR)
+                            run('chmod 600 '+SSH_KEYFILE_PATH_ON_LOCAL)                        
+                        run('nohup sh '+backupDir+'/s3put.sh > '+backupDir+'/s3put.out 2>&1 &', pty=False)
+                    else:                    
+                        _info('run( '+tars2s3+' )')
+    else:
+        # EBS doesn't like a bunch of scp's running concurrently?
+        _status('Preparing to backup to EBS volume '+ebs+'/'+pfx+' on '+hosts[0]+' ...')
+        scriptName = 'scp_to_ebs'
+        for h in range(0,len(hosts)):
+            host = hosts[h]
+            with settings(host_string=host), hide('output', 'running', 'warnings'):
+                put(SSH_KEYFILE_PATH_ON_LOCAL, '%s/.ssh' % REMOTE_USER_HOME_DIR)
+                run('chmod 600 '+SSH_KEYFILE_PATH_ON_LOCAL)                        
+
+                if h == 0 and ebs is not None:
+                    sudo('mkdir -p '+ebs+'/'+pfx+' && chown -R '+SSH_USER+': '+ebs+'/'+pfx)
+                    
+                scpToEbsSh = '#!/bin/bash\n'
+                
+                for n in range(0,numNodes):                
+                    solrPort = str(84+n)
+                    backupDir = '%s/cloud%s/solr/backups/%s' % (REMOTE_SOLR_DIR, solrPort, collection)
+                    scpToEbsSh += 'cd '+backupDir+';'
+                    scpToEbsSh += 'find . -name "shard*" -type d -exec scp -o StrictHostKeyChecking=no -r -i %s {} ec2-user@%s:%s/%s \;\n' % (SSH_KEYFILE_PATH_ON_LOCAL, hosts[0], ebs, pfx)
+                    
+                backupScript = backupDir+'/'+scriptName+'.sh'
+                run('rm -f '+backupScript)                
+                _fab_append(backupScript, scpToEbsSh)
+                _status('Running backup script on '+host+' ... be patient, this can take a while depending on your index size ...')
                 if dryRun is False:
-                    run('nohup sh '+backupDir+'/s3put.sh > '+backupDir+'/s3put.out 2>&1 &', pty=False)
+                    run('sh '+backupDir+'/'+scriptName+'.sh')
+                    _info('Backup script finished on '+host)
                 else:                    
-                    _info('run( '+tars2s3+' )')
+                    _info('run( '+scpToEbsSh+' )')
+        
         
     done = 0
     while done < len(hosts):
@@ -1512,16 +1564,29 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0):
 def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',alreadyDownloaded=0,ebsVol=None,ebsMount='/ebs0'):
     """
     Restores an index from backup into an existing collection with the same number of shards
-    """    
+    """
     ec2 = _connect_ec2()    
     hosts = _aws_cluster_hosts(ec2, cluster)
     
     needsDownload = True if int(alreadyDownloaded) == 0 else False
-    print('Needs download? '+str(needsDownload))    
     
     ebsHost = None
     backupOnEbs = None
-    if ebsVol is not None:
+    useEbsVol = False
+    
+    # EBS volume may be mounted on this host already
+    if ebsVol is None and ebsMount is not None:
+        # check if ebsMount exists
+        with settings(host_string=hosts[0]):
+            backupOnEbs = ebsMount+'/'+backup_name
+            if _fab_exists(backupOnEbs):
+                ebsHost = hosts[0]
+                useEbsVol = True
+                needsDownload = False
+                _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
+    
+    # may need to mount the EBS volume
+    if ebsVol is not None and useEbsVol is False:
         # find the instance ID of the first host
         instId = None
         for rsrv in ec2.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster}):
@@ -1533,18 +1598,18 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
             _fatal('Could not determine the instance ID for '+hosts[0])
         
         with settings(host_string=hosts[0]):
-            ec2.attach_volume(ebsVol, instId, '/dev/xvdj')
+            ec2.attach_volume(ebsVol, instId, '/dev/sdf')
+            time.sleep(10)
             sudo('lsblk')
             sudo('mkdir -p ' + ebsMount)
-            sudo('mount /dev/xvdj ' + ebsMount)
+            sudo('mount /dev/xvdf ' + ebsMount)
             sudo('chown -R %s: %s' % (SSH_USER,ebsMount))
-            ebsHost = hosts[0]
-            run('df -h')
-            
+            run('df -h')            
             backupOnEbs = ebsMount+'/'+backup_name
             if _fab_exists(backupOnEbs):
                 ebsHost = hosts[0]
                 needsDownload = False
+                useEbsVol = True
                 _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
             else:
                 _fatal('EBS backup '+backupOnEbs+' not found on '+hosts[0])
@@ -1553,7 +1618,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     # download from s3 to one of the nodes
     # use the meta file to determine shard locations
     backup = None
-    if bucket is not None:
+    if useEbsVol is False and bucket is not None:
         s3conn = boto.connect_s3()
         rootBucket = s3conn.get_bucket(bucket)
         backup = '%s/%s' % (bucket, backup_name)
@@ -1612,20 +1677,19 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     print(json.dumps(shardDirs, indent=2))
 
     # clean-up restore dir on all hosts to prepare for download
-    for host in hosts:    
-        with settings(host_string=host): #, hide('output'):
-            if needsDownload:
-                sudo('rm -rf /vol0/restore/%s' % backup_name) # delete if we're downloading new
-            sudo('mkdir -p /vol0/restore/%s; chown -R %s: /vol0/restore/%s' % (backup_name, SSH_USER, backup_name))
+    if ebsHost is None:
+        for host in hosts:    
+            with settings(host_string=host): #, hide('output'):
+                if needsDownload:
+                    sudo('rm -rf /vol0/restore/%s' % backup_name) # delete if we're downloading new
+                sudo('mkdir -p /vol0/restore/%s; chown -R %s: /vol0/restore/%s' % (backup_name, SSH_USER, backup_name))
 
     # for each shard, download the shardN.tar file from S3 on to the leader host
     if needsDownload:
+        _info('Setting up to download index from s3://'+backup)
         for shard in shardDirs.keys():
             for replica in shardDirs[shard]:
                 if replica['leader']:
-                    # download the shard tar file from S3 to the leader
-                    # TODO: You could just download from S3 on all hosts, but you need to 
-                    # make sure you only do it once per host
                     host = replica['host']
                     if hostShardMap.has_key(host) is False:
                         hostShardMap[host] = []
@@ -1672,8 +1736,6 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
 
         _info('hostShardMap: ')
         print(json.dumps(hostShardMap, indent=2))
-    
-
     
     # TODO: try to run the following commands on all nodes at once vs. synchronously
        
@@ -1728,7 +1790,6 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     results = solr.search('*:*')                
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
-    
     
 def put_file(cluster,local,remotePath=None,num=1):
     """
@@ -1944,6 +2005,24 @@ def attach_to_meta_node(cluster,meta):
     # restart each Solr node, waiting to see them come back up
     _rolling_restart_solr(ec2, cluster, None, 0)
     ec2.close()
+    
+def restart_node(cluster,port,n=0):
+    ec2 = _connect_ec2()    
+    hosts = _aws_cluster_hosts(ec2, cluster)
+    ec2.close()
+    hostIdx = int(n)
+    if hostIdx < 0 or hostIdx >= len(hosts):
+        _fatal('Invalid value '+n+' for host index!')        
+    host = hosts[int(n)]
+    
+    if len(port) == 4:
+        port = port[2:]
+    
+    with settings(host_string=host):
+        put('./'+CTL_SCRIPT, CLOUD_DIR)
+        _status('Restarting Solr on '+host+':89'+port)
+        _restart_solr(host, port)
+        run('cat cloud/fabcloud-restart'+port+'.out')        
     
 def custom_ami(cluster):
     """
