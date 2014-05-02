@@ -945,7 +945,7 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
       name: Name of the collection to create.
       rf (int, optional): Replication factor for the collection (number of replicas per shard)
       shards (int, optional): Number of shards to distribute this collection across
-      exterinal: Create an external collection
+      external: Create an external collection
 
     Returns:
       collection stats
@@ -968,6 +968,59 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
         _info('Create collection succeeded\n' + solr_resp)
     except urllib2.HTTPError as e:
         _error('Create new collection named %s failed due to: %s' % (name, str(e)) + '\n' + e.read())
+
+def delete_collection(cluster, name):
+    """
+    Delete a collection from the specified cluster.
+
+    Arg Usage:
+      cluster: Identifies the SolrCloud cluster you want to delete the collection from.
+      name: Name of the collection to delete.
+    """
+
+    hosts = _lookup_hosts(cluster, False)
+
+    deleteAction = 'http://%s:8984/solr/admin/collections?action=DELETE&name=%s' % (hosts[0], name)
+
+    _info('Delete the collection named %s using:\n%s' % (name, deleteAction))
+    try:
+        response = urllib2.urlopen(deleteAction)
+        solr_resp = response.read()
+        _info('Delete collection succeeded\n' + solr_resp)
+    except urllib2.HTTPError as e:
+        _error('Delete collection named %s failed due to: %s' % (name, str(e)) + '\n' + e.read())
+
+# Uncomment this when CLUSTERSTATUS action is available: Solr 4.8+
+#
+# def cluster_status(cluster, collection=None, shard=None):
+#     """
+#     Retrieve status for the specified cluster.
+#
+#     Arg Usage:
+#       cluster: Identifies the SolrCloud cluster you want to get status for.
+#       collection (optional): restricts status info to this collection.
+#       shard (optional, comma-separated list): restricts status info to this shard/set of shards.
+#     """
+#
+#     hosts = _lookup_hosts(cluster, False)
+#
+#     params = ''
+#     if collection is not None or shard is not None:
+#         params = '?'
+#         if collection is not None:
+#             params += collection
+#             if shard is not None: params += '&'
+#         if shard is not None: params += shard
+#
+#     listAction = 'http://%s:8984/solr/admin/collections?action=CLUSTERSTATUS%s' % (hosts[0], params)
+#
+#     _info('Retrieving cluster status using:\n%s' % listAction)
+#     try:
+#         response = urllib2.urlopen(listAction)
+#         solr_resp = response.read()
+#         _info('Cluster status retrieval succeeded\n' + solr_resp)
+#     except urllib2.HTTPError as e:
+#         _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
 
 def new_zk_ensemble(cluster, n=3, instance_type='m3.medium'):
     """
