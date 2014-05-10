@@ -23,7 +23,7 @@ AWS_REGION = None
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_AMI_ID = 'ami-ff041996'
+AWS_AMI_ID = 'ami-ae32d0c6'
 HVM_AMI_ID = 'TODO' # build an HVM based AMI
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -31,9 +31,9 @@ SSH_USER = 'ec2-user'
 REMOTE_USER_HOME_DIR = '/home/' + SSH_USER
 AWS_KEY_NAME = 'solr-scale-tk'
 SSH_KEYFILE_PATH_ON_LOCAL = '~/.ssh/solr-scale-tk.pem'
-REMOTE_ZK_DIR = REMOTE_USER_HOME_DIR + '/zookeeper-3.4.5'
-REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.7.1'
-REMOTE_SOLR_JAVA_HOME = REMOTE_USER_HOME_DIR + '/jdk1.7.0_25'
+REMOTE_ZK_DIR = REMOTE_USER_HOME_DIR + '/zookeeper-3.4.6'
+REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.8.0'
+REMOTE_SOLR_JAVA_HOME = REMOTE_USER_HOME_DIR + '/jdk1.7.0_55'
 CLOUD_DIR = REMOTE_USER_HOME_DIR + '/cloud'
 CTL_SCRIPT = 'solr-ctl.sh'
 ENV_SCRIPT = 'solr-ctl-env.sh'
@@ -600,7 +600,7 @@ def _setup_instance_stores(hosts, numStores, ami, xdevs):
         return
     
     for host in hosts:
-        with settings(host_string=host), hide('output', 'running', 'warnings'):
+        with settings(host_string=host): #, hide('output', 'running', 'warnings'):
             for v in range(0,numStores):
                 # get rid of the silly /mnt point which only sometimes gets
                 # setup correctly by Amazon
@@ -619,12 +619,13 @@ def _setup_instance_stores(hosts, numStores, ami, xdevs):
 def _integ_host_with_meta(host, metaHost):    
     # verify if RabbitMQ is running on the meta node
     hasMq = False
-    with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
-        try:
-            sudo('rabbitmqctl status')
-            hasMq = True
-        except:
-            hasMq = False
+    if metaHost is not None:
+        with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
+            try:
+                sudo('rabbitmqctl status')
+                hasMq = True
+            except:
+                hasMq = False
     
     # setup logging on the Solr server based on whether there is a meta host
     # running rabbitmq and the logstash4solr stuff   
@@ -638,32 +639,33 @@ def _integ_host_with_meta(host, metaHost):
     _fab_append(remoteLog4JPropsFile, log4jCfg)
 
     # if we're running a metanode, startup collectd with the network plugin configured
-    sudo('rm -f /etc/collectd.conf')
-    collectdNetwork = '''FQDNLookup   true
-Interval     10 
-LoadPlugin logfile
-<Plugin logfile>
-LogLevel info
-File "/var/log/collectd.log"
-Timestamp true
-PrintSeverity false
-</Plugin>
-LoadPlugin cpu
-LoadPlugin disk
-LoadPlugin interface
-LoadPlugin load
-LoadPlugin memory
-LoadPlugin network
-<Plugin network>
-<Server "'''+metaHost+'''" "25826">
-Interface "eth0"
-</Server>
-</Plugin>
-Hostname "'''+host+'''"
-'''
-    collectdConf = '/etc/collectd.conf'
-    _fab_append(collectdConf, collectdNetwork, use_sudo=True)
-    sudo('service collectd restart')
+    if metaHost is not None:
+        sudo('rm -f /etc/collectd.conf')
+        collectdNetwork = '''FQDNLookup   true
+    Interval     10 
+    LoadPlugin logfile
+    <Plugin logfile>
+    LogLevel info
+    File "/var/log/collectd.log"
+    Timestamp true
+    PrintSeverity false
+    </Plugin>
+    LoadPlugin cpu
+    LoadPlugin disk
+    LoadPlugin interface
+    LoadPlugin load
+    LoadPlugin memory
+    LoadPlugin network
+    <Plugin network>
+    <Server "'''+metaHost+'''" "25826">
+    Interface "eth0"
+    </Server>
+    </Plugin>
+    Hostname "'''+host+'''"
+    '''
+        collectdConf = '/etc/collectd.conf'
+        _fab_append(collectdConf, collectdNetwork, use_sudo=True)
+        sudo('service collectd restart')
     
 
 # -----------------------------------------------------------------------------
@@ -801,14 +803,16 @@ def new_ec2_instances(cluster,
     # mount the instance stores on /vol#
     _status('Making instance store file systems ... please be patient')
     _setup_instance_stores(hosts, numStores, ami, xdevs)
-                    
+     
+    # This is disabled to avoid uploading AWS creds in advertently
+    #               
     # setup for using s3cmd to put / get files to / from S3 
-    awsAccessCreds = ('\naccess_key = %s\nsecret_key = %s\n' % 
-      (boto.config.get('Credentials', 'aws_access_key_id'), boto.config.get('Credentials', 'aws_secret_access_key')))                
-    for host in hosts:
-        with settings(host_string=host), hide('output', 'running', 'warnings'):
-            _fab_append(REMOTE_USER_HOME_DIR+'/.s3cfg', awsAccessCreds)
-            run('s3cmd ls s3://solr-scale-tk/ || true')                     
+    #awsAccessCreds = ('\naccess_key = %s\nsecret_key = %s\n' % 
+    #  (boto.config.get('Credentials', 'aws_access_key_id'), boto.config.get('Credentials', 'aws_secret_access_key')))                
+    #for host in hosts:
+    #    with settings(host_string=host), hide('output', 'running', 'warnings'):
+    #        _fab_append(REMOTE_USER_HOME_DIR+'/.s3cfg', awsAccessCreds)
+    #        run('s3cmd ls s3://solr-scale-tk/ || true')                     
 
     return hosts
 
@@ -889,8 +893,11 @@ export SOLR_JAVA_MEM="%s"
 
     # support option to enable logstash4solr integration and zabbix agent
     metaHost = None
-    if meta is not None:
+    if meta is not None:        
         metaHost = _lookup_hosts(meta, True)[0]
+        _status('Found metaHost: '+metaHost)
+    else:
+        _status('No meta node specified.')
 
     # setup N Solr nodes per host using the script to do the actual starting
     numStores = instanceStoresByType[instance_type]
@@ -900,8 +907,7 @@ export SOLR_JAVA_MEM="%s"
     solrHostAndPorts = []
     for host in hosts:
         with settings(host_string=host), hide('output', 'running', 'warnings'):
-            if metaHost is not None:
-                _integ_host_with_meta(host, metaHost)
+            _integ_host_with_meta(host, metaHost)
 
             for p in range(0, numNodesPerHost):
                 solrPort = str(84 + p)
@@ -1114,8 +1120,9 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, insta
         numInstances: %d
         nodesPerHost: %d
         ami: %s
+        meta: %s
     *****
-    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami)
+    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami, meta)
     _info(paramReport)
     
     if confirm('Verify the parameters. OK to proceed?') is False:

@@ -62,7 +62,7 @@
     <dependency>
       <groupId>org.apache.solr</groupId>
       <artifactId>solr-solrj</artifactId>
-      <version>4.7.1</version>
+      <version>4.8.0</version>
       <type>jar</type>
     </dependency>
     <dependency>
@@ -147,5 +147,14 @@
       <artifactId>gimap</artifactId>
       <version>1.5.1</version>
     </dependency>
+    <dependency>
+      <groupId>sdsu</groupId>
+      <artifactId>java-lib</artifactId>
+      <version>0.1</version>
+      <type>jar</type>
+      <scope>system</scope>
+      <systemPath>${basedir}/lib/sdsuLibJKD12.jar</systemPath>
+    </dependency>
+
   </dependencies>
 </project>

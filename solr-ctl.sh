@@ -1,6 +1,6 @@
 #!/bin/bash
 
-ZK_CLIENT_TIMEOUT="5000"
+ZK_CLIENT_TIMEOUT="15000"
 GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution"
 SOLR_JAVA_OPTS="-server -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
 REMOTE_JMX_OPTS="-Djava.net.preferIPv4Stack=true -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
@@ -44,6 +44,10 @@ fi
 if [ "$MODE" == "kill" ]; then
   SOLR_PORT="$2"
 
+  cd $SOLR_TOP/cloud$SOLR_PORT
+  java -jar start.jar STOP.PORT=79$SOLR_PORT STOP.KEY=key --stop || true
+  sleep 5
+
   for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
     do
       kill -9 $ID
@@ -81,6 +85,10 @@ if [ "$SOLR_PORT" == "" ]; then
   echo "No Solr port provided!"
   exit 1
 fi
+
+cd $SOLR_TOP/cloud$SOLR_PORT
+java -jar start.jar STOP.PORT=79$SOLR_PORT STOP.KEY=key --stop || true
+sleep 5
 
 for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
   do
