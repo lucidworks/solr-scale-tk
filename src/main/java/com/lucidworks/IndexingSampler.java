@@ -41,12 +41,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   // none,
   // a final hard commit is sent.
   private static AtomicInteger refCounter = new AtomicInteger(0);
+  
+  private static List<String> englishWords = null;
 
   protected Logger log;
   protected CloudSolrServer cloudSolrServer;
   protected Random rand;
   protected FieldSpec[] fields;
-  protected List<String> englishWords;
   protected boolean commitAtEnd = true;
 
   private static final MetricRegistry metrics = new MetricRegistry();
@@ -81,15 +82,19 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     rand = new Random(Long.parseLong(context.getParameter("RANDOM_SEED")));
     
     // setup for data generation
-    try {
-      englishWords = loadWords(context.getParameter("WORD_LIST"));
-    } catch (Exception exc) {
-      if (exc instanceof RuntimeException)
-        throw (RuntimeException)exc;
-      else
-        throw new RuntimeException(exc);
+    synchronized (this.getClass()) {
+      if (englishWords == null) {
+        try {
+          englishWords = loadWords(context.getParameter("WORD_LIST"));
+        } catch (Exception exc) {
+          if (exc instanceof RuntimeException)
+            throw (RuntimeException)exc;
+          else
+            throw new RuntimeException(exc);
+        }
+        log.info("Loaded "+englishWords.size()+" words from "+context.getParameter("WORD_LIST"));
+      }
     }
-    log.info("Loaded "+englishWords.size()+" words from "+context.getParameter("WORD_LIST"));
     
     fields = new FieldSpec[] {
       new FieldSpec("integer1_i", "i:1:100000:u:10"),
