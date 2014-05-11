@@ -17,8 +17,8 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <stringProp name="LoopController.loops">1</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">20</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">10</stringProp>
+        <stringProp name="ThreadGroup.num_threads">10</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">0</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
@@ -31,12 +31,12 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="ZK_HOST" elementType="Argument">
                 <stringProp name="Argument.name">ZK_HOST</stringProp>
-                <stringProp name="Argument.value">ec2-54-86-186-74.compute-1.amazonaws.com:2181,ec2-54-86-190-176.compute-1.amazonaws.com:2181,ec2-54-84-146-69.compute-1.amazonaws.com:2181/sstk</stringProp>
+                <stringProp name="Argument.value">localhost:2181</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">test1</stringProp>
+                <stringProp name="Argument.value">test</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
@@ -56,7 +56,7 @@
               </elementProp>
               <elementProp name="ID_PREFIX" elementType="Argument">
                 <stringProp name="Argument.name">ID_PREFIX</stringProp>
-                <stringProp name="Argument.value">jm1</stringProp>
+                <stringProp name="Argument.value">jm2</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">

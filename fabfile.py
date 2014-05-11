@@ -1421,13 +1421,15 @@ def deploy_config(cluster,localConfigDir,configName):
     if os.path.isdir(localConfigDir) is False:
         _fatal('Local config directory %s not found!' % localConfigDir)
         
+    parts = localConfigDir.split('/')
+    dirName = parts[len(parts)-1]
     hosts = _lookup_hosts(cluster, False)
     with settings(host_string=hosts[0]):
         remoteDir = REMOTE_USER_HOME_DIR+'/cloud/tmp/'+configName
         run('rm -rf '+remoteDir)
         run('mkdir -p '+remoteDir)
         put(localConfigDir, remoteDir)
-        run('cd '+remoteDir+'; find . -type d -exec mv {} conf \;')
+        run('mv cloud/tmp/%s/%s cloud/tmp/%s/conf || true' % (configName, dirName, configName))
         run(SSTK + ' upconfig ' + configName)
 
 def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):

@@ -46,16 +46,34 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
 
   protected Logger log;
   protected CloudSolrServer cloudSolrServer;
-  protected Random rand;
+  //protected Random rand;
   protected FieldSpec[] fields;
   protected boolean commitAtEnd = true;
 
   private static final MetricRegistry metrics = new MetricRegistry();
   private static final Timer sendBatchToSolrTimer = metrics.timer("sendBatchToSolr");
+  private static final Timer constructBatch = metrics.timer("constructBatch");
   private static ConsoleReporter reporter = null;
   
   private static long dateBaseMs = 1368045398000l;
-
+  
+  private static ThreadLocal<Random> rands = new ThreadLocal<Random>() {
+    
+    final AtomicInteger inits = new AtomicInteger(0);
+    
+    @Override
+    protected Random initialValue() {
+      return new Random(5150+inits.incrementAndGet());
+    }    
+  };
+  
+  private static ThreadLocal<Zipf> zipf = new ThreadLocal<Zipf>() {
+    @Override
+    protected Zipf initialValue() {
+      return new Zipf(30000);
+    }
+  };
+  
   @Override
   public Arguments getDefaultParameters() {
     Arguments defaultParameters = new Arguments();
@@ -78,8 +96,8 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     log = getLogger().getChildLogger("LW-IndexingSampler");
     
     commitAtEnd = "true".equals(context.getParameter("COMMIT_AT_END"));
-
-    rand = new Random(Long.parseLong(context.getParameter("RANDOM_SEED")));
+    
+    int ref = refCounter.incrementAndGet();
     
     // setup for data generation
     synchronized (this.getClass()) {
@@ -99,26 +117,26 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     fields = new FieldSpec[] {
       new FieldSpec("integer1_i", "i:1:100000:u:10"),
       new FieldSpec("integer2_i", "i:1:10000:u:50"),
-      new FieldSpec("integer3_i", "i:1:1000:u:20"),
+      //new FieldSpec("integer3_i", "i:1:1000:u:20"),
       new FieldSpec("long1_l", "l:1:10000000:u:10"),
       new FieldSpec("long2_l", "l:1:50000000:u:20"),
-      new FieldSpec("long3_l", "l:1:25000000:u:30"),
+      //new FieldSpec("long3_l", "l:1:25000000:u:30"),
       new FieldSpec("float1_f", "f:1:2:u:10"),
       new FieldSpec("float2_f", "f:1:1:u:10"),
       new FieldSpec("double1_d", "d:1:6:u:20"),
       new FieldSpec("double2_d", "d:1:4:u:40"),
       new FieldSpec("timestamp1_tdt", "l:1:31536000:u:0"),
       new FieldSpec("timestamp2_tdt", "l:1:31536000:u:10"),
-      new FieldSpec("string1_s", "s:10:109582:z:0"),
-      new FieldSpec("string2_s", "s:12:5000:z:0"),
-      new FieldSpec("string3_s", "s:4:1000:z:10"),
-      new FieldSpec("string4_ss", "s:10:109582:z:0"),
-      new FieldSpec("string5_ss", "s:6:20000:z:30"),
+      new FieldSpec("string1_s", "s:10:20000:u:0"),
+      new FieldSpec("string2_s", "s:12:5000:u:0"),
+      new FieldSpec("string3_s", "s:4:1000:u:10"),
+      //new FieldSpec("string4_ss", "s:10:30000:z:0"),
+      new FieldSpec("string5_ss", "s:6:20000:u:30"),
       new FieldSpec("boolean1_b", "i:1:1:u:0"),
       new FieldSpec("boolean2_b", "i:1:1:u:50"),
-      new FieldSpec("text1_en", "s:15:109582:z:0", 10),
-      new FieldSpec("text2_en", "s:20:109582:z:0", 30),      
-      new FieldSpec("text3_en", "s:8:109582:z:0", 60)      
+      new FieldSpec("text1_en", "s:15:10000:u:0", 10),
+      //new FieldSpec("text2_en", "s:20:109582:u:0", 30),      
+      new FieldSpec("text3_en", "s:8:20000:z:0", 40)      
     };    
     
     String zkHost = context.getParameter("ZK_HOST");
@@ -128,8 +146,6 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     cloudSolrServer.setDefaultCollection(collection);
     cloudSolrServer.connect();
     getLogger().info("Connected to SolrCloud; collection=" + collection);
-
-    refCounter.incrementAndGet();
 
     synchronized (IndexingSampler.class) {
       if (reporter == null) {
@@ -165,7 +181,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       }
     }
     
-    Collections.shuffle(words, rand);
+    Collections.shuffle(words, rands.get());
     
     return words;
   }
@@ -229,20 +245,20 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   /**
    * Build up a test document.
    */
-  protected SolrInputDocument buildSolrInputDocument(String docId) {
+  protected SolrInputDocument buildSolrInputDocument(String docId, Random rand) {
     SolrInputDocument inDoc = new SolrInputDocument();
     inDoc.setField("id", docId);
     for (FieldSpec f : fields) {
       if (f.name.endsWith("_ss")) {
-        int numVals = rand.nextInt(30)+1;
+        int numVals = rand.nextInt(20)+1;
         for (int n=0; n < numVals; n++) {
-          Object val = f.next(englishWords);
+          Object val = f.next(rand);
           if (val != null) {              
             inDoc.addField(f.name, val);
           }
         }
       } else {
-        Object val = f.next(englishWords);
+        Object val = f.next(rand);
         if (val != null) {
           inDoc.setField(f.name, val);
         }
@@ -257,11 +273,22 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
 
     int totalDocs = 0;
     List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
+    
+    Random rand = rands.get();
+    Timer.Context constructBatchTimerCtxt = null;    
     for (int d = 0; d < numDocsPerLoop; d++) {
+      
+      if (constructBatchTimerCtxt == null) {
+        constructBatchTimerCtxt = constructBatch.time();
+      }
+      
       String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
-      batch.add(buildSolrInputDocument(docId));
+      batch.add(buildSolrInputDocument(docId, rand));
 
       if (batch.size() >= batchSize) {
+        constructBatchTimerCtxt.stop();
+        constructBatchTimerCtxt = null; // reset
+        
         totalDocs += sendBatch(batch, 10, 3);
         if (totalDocs % 1000 == 0) {
           log.info("Thread " + threadId + " has sent " + totalDocs
@@ -397,78 +424,73 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       map = new HashMap<Integer, Object>();
     }
     
-    public Object next(List<String> words) {
-      Object next = nextNoNull(words);
-      if (pctNull > 0) {
-        int pct = rand.nextInt(100)+1;
-        if (pct <= pctNull)
-          next = null;
-      }
-      return next;
+    public Object next(Random rand) {
+      int pct = rand.nextInt(100)+1;
+      return (pct > pctNull) ? nextNoNull(rand) : null;
     }
     
-    public Object nextNoNull(List<String> words) {
+    public Object nextNoNull(Random rand) {
       
-      this.words = words; // hacky but i'm tired
+      this.words = englishWords; // hacky but i'm tired
       
       String suffix = name.split("_")[1];
       if ("en".equals(suffix)) {
-        return nextText();
+        return nextText(rand);
       } else if ("tdt".equals(suffix)) {
-        return nextDate();
+        return nextDate(rand);
       } else if ("s".equals(suffix) || "ss".equals(suffix)) {
-        return nextString();
+        return nextString(rand);
       } else if ("b".equals(suffix)) {
-        return nextBoolean();
+        return nextBoolean(rand);
       } else if ("l".equals(suffix)) {
-        return nextLong();
+        return nextLong(rand);
       } else if ("i".equals(suffix)) {
-        return nextInt();
+        return nextInt(rand);
       } else if ("f".equals(suffix)) {
-        return nextFloat();
+        return nextFloat(rand);
       } else if ("d".equals(suffix)) {
-        return nextDouble();
+        return nextDouble(rand);
       } else {
         throw new IllegalArgumentException("Unsupported dynamic field suffix '"+suffix+"'!");
       }
     }
     
-    public Boolean nextBoolean() {
-      return nextInt() % 2 == 0;
+    public Boolean nextBoolean(Random rand) {
+      return rand.nextBoolean();
     }
     
-    public String nextText() {
+    public String nextText(Random rand) {
       int numWordsInText = rand.nextInt(numWords)+1;
       StringBuilder sb = new StringBuilder();
       for (int w=0; w < numWordsInText; w++) {
         if (w > 0) sb.append(" ");
-        sb.append(nextString());
+        sb.append(nextString(rand));
       }
       return sb.toString();
     }
     
-    public Date nextDate() {
-      return new Date(dateBaseMs + nextLong()*1000);
+    public Date nextDate(Random rand) {
+      return new Date(dateBaseMs + nextLong(rand)*1000);
     }
 
-    public int nextInt() {
-      return gen.nextInt(map);
+    public int nextInt(Random rand) {
+      return gen.nextInt(map, rand);
     }
 
-    public long nextLong() {
-      return gen.nextInt(map);
+    public long nextLong(Random rand) {
+      return gen.nextLong(map, rand);
     }
 
-    public double nextDouble() {
-      return gen.nextDouble(map);
+    public double nextDouble(Random rand) {
+      return gen.nextDouble(map, rand);
     }
 
-    public float nextFloat() {
-      return gen.nextFloat(map);
+    public float nextFloat(Random rand) {
+      return gen.nextFloat(map, rand);
     }
 
-    public String nextString() {
-      return gen.nextString(words);
+    public String nextString(Random rand) {
+      return gen.nextString(rand);
     }
   }
   
@@ -480,20 +502,20 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       card = c;
     }
 
-    public int nextInt(Map<Integer, Object> map) {
+    public int nextInt(Map<Integer, Object> map, Random rand) {
       return rand.nextInt(card);
     }
 
-    public long nextLong(Map<Integer, Object> map) {
+    public long nextLong(Map<Integer, Object> map, Random rand) {
       return rand.nextLong() % card;
     }
 
-    public float nextFloat(Map<Integer, Object> map) {
+    public float nextFloat(Map<Integer, Object> map, Random rand) {
       int seed = rand.nextInt(card);
       Float f = (Float) map.get(seed);
       if (f == null) {
         if (!hasMapFile) {
-          f = randomFloat();
+          f = randomFloat(rand);
           map.put(seed, f);
         } else {
           throw new IllegalStateException("Number " + seed + " is not found in map file");
@@ -502,12 +524,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return f;
     }
 
-    public double nextDouble(Map<Integer, Object> map) {
+    public double nextDouble(Map<Integer, Object> map, Random rand) {
       int seed = rand.nextInt(card);
       Double d = (Double) map.get(seed);
       if (d == null) {
         if (!hasMapFile) {
-          d = randomDouble();
+          d = randomDouble(rand);
           map.put(seed, d);
         } else {
           throw new IllegalStateException("Number " + seed + " is not found in map file");
@@ -516,11 +538,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return d;
     }
 
-    public String nextString(List<String> words) {
+    public String nextString(Random rand) {
       int seed = rand.nextInt(card);
-      while (seed >= words.size())
+      while (seed >= englishWords.size())
         seed = rand.nextInt(card);      
-      return words.get(seed); 
+      return englishWords.get(seed); 
     }
   }  
 
@@ -531,17 +553,17 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
                                   // rand number to the field value is
                                   // pre-defined
 
-    abstract public int nextInt(Map<Integer, Object> map);
+    abstract public int nextInt(Map<Integer, Object> map, Random rand);
 
-    abstract public long nextLong(Map<Integer, Object> map);
+    abstract public long nextLong(Map<Integer, Object> map, Random rand);
 
-    abstract public float nextFloat(Map<Integer, Object> map);
+    abstract public float nextFloat(Map<Integer, Object> map, Random rand);
 
-    abstract public double nextDouble(Map<Integer, Object> map);
+    abstract public double nextDouble(Map<Integer, Object> map, Random rand);
 
-    abstract public String nextString(List<String> words);
+    abstract public String nextString(Random rand);
 
-    public String randomString() {
+    public String randomString(Random rand) {
       int var = (int) ((double) avgsz * 0.3);
       StringBuffer sb = new StringBuffer(avgsz + var);
       if (var < 1)
@@ -554,44 +576,44 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return sb.toString();
     }
 
-    public float randomFloat() {
+    public float randomFloat(Random rand) {
       return rand.nextFloat() * rand.nextInt();
     }
 
-    public double randomDouble() {
+    public double randomDouble(Random rand) {
       return rand.nextDouble() * rand.nextInt();
     }
   }
 
   class ZipfRandomGenerator extends RandomGenerator {
-    Zipf z;
+    //Zipf z;
 
     public ZipfRandomGenerator(int a, int c) {
       avgsz = a;
-      z = new Zipf(c);
+      //z = new Zipf(c);
     }
 
     // the Zipf library returns a rand number [1..cardinality], so we substract by 1
     // to get [0..cardinality) the randome number returned by zipf library is an 
     // integer, but converted into double
     private double next() {
-      return z.nextElement() - 1;
+      return zipf.get().nextElement() - 1;
     }
 
-    public int nextInt(Map<Integer, Object> map) {
+    public int nextInt(Map<Integer, Object> map, Random rand) {
       return (int) next();
     }
 
-    public long nextLong(Map<Integer, Object> map) {
+    public long nextLong(Map<Integer, Object> map, Random rand) {
       return (long) next();
     }
 
-    public float nextFloat(Map<Integer, Object> map) {
+    public float nextFloat(Map<Integer, Object> map, Random rand) {
       int seed = (int) next();
       Float d = (Float) map.get(seed);
       if (d == null) {
         if (!hasMapFile) {
-          d = randomFloat();
+          d = randomFloat(rand);
           map.put(seed, d);
         } else {
           throw new IllegalStateException("Number " + seed + " is not found in map file");
@@ -600,12 +622,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return d;
     }
 
-    public double nextDouble(Map<Integer, Object> map) {
+    public double nextDouble(Map<Integer, Object> map, Random rand) {
       int seed = (int) next();
       Double d = (Double) map.get(seed);
       if (d == null) {
         if (!hasMapFile) {
-          d = randomDouble();
+          d = randomDouble(rand);
           map.put(seed, d);
         } else {
           throw new IllegalStateException("Number " + seed + " is not found in map file");
@@ -614,11 +636,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return d;
     }
 
-    public String nextString(List<String> words) {
+    public String nextString(Random rand) {
       int seed = (int) next();
-      while (seed >= words.size())
+      while (seed >= englishWords.size())
         seed = (int) next();      
-      return words.get(seed);
+      return englishWords.get(seed);
     }
   }
 }
