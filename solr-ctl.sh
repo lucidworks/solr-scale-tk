@@ -1,8 +1,8 @@
 #!/bin/bash
 
 ZK_CLIENT_TIMEOUT="15000"
-GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution"
-SOLR_JAVA_OPTS="-server -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
+GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution"
+SOLR_JAVA_OPTS="-server -XX:-UseSuperWord -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
 REMOTE_JMX_OPTS="-Djava.net.preferIPv4Stack=true -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
 
 SCRIPT_DIR=/home/ec2-user/cloud

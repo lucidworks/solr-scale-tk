@@ -23,8 +23,8 @@ AWS_REGION = None
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_AMI_ID = 'ami-ae32d0c6'
-HVM_AMI_ID = 'TODO' # build an HVM based AMI
+AWS_AMI_ID = 'ami-96779efe'
+HVM_AMI_ID = 'ami-e2749d8a'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
 SSH_USER = 'ec2-user'
@@ -32,7 +32,7 @@ REMOTE_USER_HOME_DIR = '/home/' + SSH_USER
 AWS_KEY_NAME = 'solr-scale-tk'
 SSH_KEYFILE_PATH_ON_LOCAL = '~/.ssh/solr-scale-tk.pem'
 REMOTE_ZK_DIR = REMOTE_USER_HOME_DIR + '/zookeeper-3.4.6'
-REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.8.0'
+REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.8.1'
 REMOTE_SOLR_JAVA_HOME = REMOTE_USER_HOME_DIR + '/jdk1.7.0_55'
 CLOUD_DIR = REMOTE_USER_HOME_DIR + '/cloud'
 CTL_SCRIPT = 'solr-ctl.sh'
@@ -40,7 +40,9 @@ ENV_SCRIPT = 'solr-ctl-env.sh'
 SSTK = CLOUD_DIR + '/' + CTL_SCRIPT
 SSTK_ENV = CLOUD_DIR + '/' + ENV_SCRIPT  
 
-instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8 }
+instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 
+                        'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
+                        'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1 }
 
 class _HeadRequest(urllib2.Request):
     def get_method(self):
@@ -431,7 +433,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '512m'
-    elif instance_type == 'm3.xlarge':
+    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large':
         if numNodesPerHost == 1:
             mx = '7g'
         elif numNodesPerHost == 2:
@@ -445,11 +447,11 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '640m'
-    elif instance_type == 'm3.2xlarge':
+    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge':
         if numNodesPerHost == 1:
-            mx = '18g'
+            mx = '15g'
         elif numNodesPerHost == 2:
-            mx = '9g'
+            mx = '8g'
         elif numNodesPerHost == 3:
             mx = '6g'
         elif numNodesPerHost == 4:
@@ -459,7 +461,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '3g'
-    elif instance_type == 'i2.4xlarge':
+    elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
         else:
@@ -704,9 +706,9 @@ def new_ec2_instances(cluster,
       hosts (list): A list of public DNS names for the instances launched by this command.
     """
     
-    if instance_type == 'i2.4xlarge' and ami != HVM_AMI_ID:
+    if (instance_type.startswith('i2.') or instance_type.startswith('r3.')) and ami != HVM_AMI_ID:
         ami = HVM_AMI_ID
-        _warn('Must use ' + ami + ' for i2.4xlarge instance types!')
+        _warn('Must use ' + ami + ' for '+instance_type+' instances!')
     
     if instance_type.find('m1.') != -1 and instance_type != 'm1.small':
         _fatal('''Please use the m3.* instance types instead of m1! 
@@ -1255,7 +1257,7 @@ def setup_meta_node(cluster):
     _status('Setting up the meta node on ' + metaHost)
     with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
         # start rabbitmq service on meta node
-        sudo('service rabbitmq-server start')
+        sudo('service rabbitmq-server restart')
 
         # create the exchanges / queues
         run('rabbitmqadmin -V / declare exchange name=log4j-exchange type=direct durable=false')
@@ -1264,6 +1266,7 @@ def setup_meta_node(cluster):
         _status('Started RabbitMQ service ...')
 
         # configure banana
+        _status('Configuring logstash4solr and banana dashboard ...')
         _configure_banana(metaHost)
         
         # setup the data directory on /vol0 for the logstash_logs core
@@ -1283,6 +1286,7 @@ collection=
         startLogstashSolrServer = REMOTE_USER_HOME_DIR + '/slk-4.7.0/solr-4.7.0/SiLK/silk-ctl.sh start'
         
         run('nohup ' + startLogstashSolrServer + ' >& /dev/null < /dev/null &', pty=False)
+        _status('Waiting to see logstash4solr server come online ...')
         _wait_to_see_solr_up_on_hosts([metaHost + ':8983'])
 
         _status('Started Solr for logstash4solr')
@@ -1291,6 +1295,9 @@ collection=
         logstash4solr = REMOTE_USER_HOME_DIR + '/slk-4.7.0/solrWriterForLogStash/logstash_deploy/logstash4solr-ctl.sh'
         run('nohup ' + logstash4solr + ' >& /dev/null < /dev/null &', pty=False)        
         _status('Started logstash4solr process')
+        
+        # do this again to reset the dashboard correctly
+        _configure_banana(metaHost)        
 
     print('RabbitMQ Admin UI @ ' + _blue('http://%s:15672/' % metaHost))
     print('Logstash4Solr Solr Console @ ' + _blue('http://%s:8983/solr/#/' % metaHost))
