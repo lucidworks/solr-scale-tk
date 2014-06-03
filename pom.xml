@@ -62,7 +62,7 @@
     <dependency>
       <groupId>org.apache.solr</groupId>
       <artifactId>solr-solrj</artifactId>
-      <version>4.8.0</version>
+      <version>4.8.1</version>
       <type>jar</type>
     </dependency>
     <dependency>
@@ -155,6 +155,22 @@
       <scope>system</scope>
       <systemPath>${basedir}/lib/sdsuLibJKD12.jar</systemPath>
     </dependency>
+
+<dependency>
+	<groupId>org.apache.pig</groupId>
+	<artifactId>pig</artifactId>
+	<version>0.11.1</version>
+</dependency>
+
+<dependency>
+	<groupId>org.apache.hadoop</groupId>
+	<artifactId>hadoop-core</artifactId>
+	<version>1.0.3</version>
+</dependency>
+
+
+
+
 
   </dependencies>
 </project>

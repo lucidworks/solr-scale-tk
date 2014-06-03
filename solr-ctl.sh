@@ -1,8 +1,27 @@
 #!/bin/bash
 
-ZK_CLIENT_TIMEOUT="15000"
+ZK_CLIENT_TIMEOUT="20000"
 GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution"
-SOLR_JAVA_OPTS="-server -XX:-UseSuperWord -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
+SOLR_JAVA_OPTS="-server -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS \
+-XX:-UseSuperWord \
+-XX:NewRatio=3 \
+-XX:SurvivorRatio=4 \
+-XX:TargetSurvivorRatio=90 \
+-XX:MaxTenuringThreshold=8 \
+-XX:+UseConcMarkSweepGC \
+-XX:+CMSScavengeBeforeRemark \
+-XX:PretenureSizeThreshold=64m \
+-XX:CMSFullGCsBeforeCompaction=1 \
+-XX:+UseCMSInitiatingOccupancyOnly \
+-XX:CMSInitiatingOccupancyFraction=70 \
+-XX:CMSTriggerPermRatio=80 \
+-XX:CMSMaxAbortablePrecleanTime=6000 \
+-XX:+CMSParallelRemarkEnabled \
+-XX:+ParallelRefProcEnabled \
+-XX:+UseLargePages \
+-XX:+AggressiveOpts"
+
+#SOLR_JAVA_OPTS="-server -XX:-UseSuperWord -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
 REMOTE_JMX_OPTS="-Djava.net.preferIPv4Stack=true -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
 
 SCRIPT_DIR=/home/ec2-user/cloud

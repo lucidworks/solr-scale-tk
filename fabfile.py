@@ -25,6 +25,7 @@ USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
 AWS_AMI_ID = 'ami-96779efe'
 HVM_AMI_ID = 'ami-e2749d8a'
+AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
 SSH_USER = 'ec2-user'
@@ -461,6 +462,8 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '3g'
+    elif instance_type == 'r3.2xlarge':
+        mx = '12g'
     elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
@@ -601,8 +604,8 @@ def _setup_instance_stores(hosts, numStores, ami, xdevs):
     if numStores <= 0:
         return
     
-    for host in hosts:
-        with settings(host_string=host): #, hide('output', 'running', 'warnings'):
+    for h in range(0,len(hosts)):
+        with settings(host_string=hosts[h]): #, hide('output', 'running', 'warnings'):
             for v in range(0,numStores):
                 # get rid of the silly /mnt point which only sometimes gets
                 # setup correctly by Amazon
@@ -619,19 +622,9 @@ def _setup_instance_stores(hosts, numStores, ami, xdevs):
                 sudo('chown -R %s: /vol%d' % (SSH_USER, v))
 
 def _integ_host_with_meta(host, metaHost):    
-    # verify if RabbitMQ is running on the meta node
-    hasMq = False
-    if metaHost is not None:
-        with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
-            try:
-                sudo('rabbitmqctl status')
-                hasMq = True
-            except:
-                hasMq = False
-    
     # setup logging on the Solr server based on whether there is a meta host
     # running rabbitmq and the logstash4solr stuff   
-    if hasMq:
+    if metaHost is not None:
         log4jCfg = _gen_log4j_cfg(host, metaHost, 'WARN')
     else:
         log4jCfg = _gen_log4j_cfg()
@@ -674,13 +667,14 @@ def _integ_host_with_meta(host, metaHost):
 # Fabric actions begin here ... anything above this are private helper methods.
 # -----------------------------------------------------------------------------
 def new_ec2_instances(cluster,
-                    n=1,
-                    maxWait=180,
-                    instance_type=AWS_INSTANCE_TYPE,
-                    ami=AWS_AMI_ID,
-                    key=AWS_KEY_NAME,
-                    numInstanceStores=None,
-                    az='us-east-1b'):
+                      n=1,
+                      maxWait=180,
+                      instance_type=AWS_INSTANCE_TYPE,
+                      ami=AWS_AMI_ID,
+                      key=AWS_KEY_NAME,
+                      numInstanceStores=None,
+                      az=AZ,
+                      placement_group=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -775,9 +769,10 @@ def new_ec2_instances(cluster,
                              security_groups=[AWS_SECURITY_GROUP],
                              block_device_map=bdm,
                              monitoring_enabled=True,
-                             placement=az)
+                             placement=az,
+                             placement_group=placement_group)
 
-    time.sleep(3) # sometimes the AWS API is a little sluggish in making these instances available to this API
+    time.sleep(4) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
     # add a tag to each instance so that we can filter many instances by our cluster tag
     username = getpass.getuser()
@@ -798,7 +793,7 @@ def new_ec2_instances(cluster,
     ec2.close()
 
     # don't return from this operation until we can SSH into each node
-    waitSecs = 240 if ami == HVM_AMI_ID else 180
+    waitSecs = 360 if ami == HVM_AMI_ID else 180
     if _verify_ssh_connectivity(hosts, waitSecs) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
 
@@ -952,7 +947,7 @@ def is_solr_up(cluster):
     _wait_to_see_solr_up_on_hosts(solrHostAndPorts, 5)
 
 # create a collection
-def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
+def new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     """
     Create a new collection in the specified cluster.
 
@@ -964,7 +959,6 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
       name: Name of the collection to create.
       rf (int, optional): Replication factor for the collection (number of replicas per shard)
       shards (int, optional): Number of shards to distribute this collection across
-      external: Create an external collection
 
     Returns:
       collection stats
@@ -978,10 +972,9 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud', external=None):
     replicas = int(rf) * int(shards)
     maxShardsPerNode = int(max(1, round(replicas / nodes)))
     _info('%d cores across %d nodes requires maxShardsPerNode=%d' % (replicas, nodes, maxShardsPerNode))
-    ext = 'false' if external is None else 'true'
 
-    createAction = ('http://%s:8984/solr/admin/collections?action=CREATE&name=%s&replicationFactor=%s&numShards=%s&collection.configName=%s&maxShardsPerNode=%s&external=%s' %
-         (hosts[0], name, str(rf), str(shards), conf, str(maxShardsPerNode), ext))
+    createAction = ('http://%s:8984/solr/admin/collections?action=CREATE&name=%s&replicationFactor=%s&numShards=%s&collection.configName=%s&maxShardsPerNode=%s' %
+         (hosts[0], name, str(rf), str(shards), conf, str(maxShardsPerNode)))
 
     _info('Create new collection named %s using:\n%s' % (name, createAction))
     try:
@@ -1044,7 +1037,7 @@ def delete_collection(cluster, name):
 #     except urllib2.HTTPError as e:
 #         _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
 
-def new_zk_ensemble(cluster, n=3, instance_type='m3.medium'):
+def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=AZ, placement_group=None):
     """
     Configures, starts, and checks the health of a ZooKeeper ensemble on one or more nodes in a cluster.
 
@@ -1067,7 +1060,7 @@ def new_zk_ensemble(cluster, n=3, instance_type='m3.medium'):
     ''' % (cluster, int(n), instance_type)
     _info(paramReport)
 
-    hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type)
+    hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, az=az, placement_group=placement_group)
 
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
 
@@ -1099,7 +1092,7 @@ def kill(cluster):
     ec2.close()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, instance_type=AWS_INSTANCE_TYPE, ami=AWS_AMI_ID, quiet=False):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, instance_type=AWS_INSTANCE_TYPE, ami=AWS_AMI_ID, az=AZ, placement_group=None):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
@@ -1122,17 +1115,16 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, insta
         numInstances: %d
         nodesPerHost: %d
         ami: %s
+        az: %s
         meta: %s
     *****
-    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami, meta)
+    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami, az, meta)
     _info(paramReport)
     
     if confirm('Verify the parameters. OK to proceed?') is False:
         return
 
-    # TODO: allow zk setup on same nodes as SolrCloud - zkn must be <= n
-
-    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami)
+    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group)
 
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(ec2hosts))
 
@@ -1303,11 +1295,11 @@ collection=
     print('Logstash4Solr Solr Console @ ' + _blue('http://%s:8983/solr/#/' % metaHost))
     print('Banana UI @ ' + _blue('http://%s:8983/banana' % metaHost))
 
-def new_meta_node(meta, instance_type='m3.large'):
+def new_meta_node(meta, instance_type='m3.large', ami=AWS_AMI_ID, az=AZ, placement_group=None):
     """
     Launches a new meta node on an m3.large instance.
     """
-    ec2hosts = new_ec2_instances(cluster=meta, n=1, instance_type=instance_type)
+    ec2hosts = new_ec2_instances(cluster=meta, n=1, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group)
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(ec2hosts))
     setup_meta_node(meta)
 
@@ -1857,7 +1849,7 @@ def restart_solr(cluster,wait=0):
     _rolling_restart_solr(ec2, cluster, None, wait)
     ec2.close()
 
-def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',external=None,numDocs=10000,offset=0):
+def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',numDocs=10000,offset=0):
     """
     create a bunch of collections and index some docs
     """
@@ -1872,7 +1864,7 @@ def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',externa
         _fatal('Invalid offset! '+offset)
     for n in range(offsetIndex,numCollections):
         name = prefix + str(n)
-        new_collection(cluster,name=name, rf=int(rf), shards=int(shards), conf=conf, external=external)
+        new_collection(cluster,name=name, rf=int(rf), shards=int(shards), conf=conf)
         local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d' % (name, zkHost, numDocs))
         
 def jconsole(cluster):
@@ -1933,7 +1925,7 @@ def healthcheck(cluster,collection):
     ec2.close()        
     local('./tools.sh healthcheck -collection=%s -zkHost=%s' % (collection, zkHost))
 
-def setup_instance_stores(cluster):
+def setup_instance_stores(cluster,numInstanceStores=1):
     """
     Setup instance stores on an existing cluster.
     """
@@ -1942,7 +1934,7 @@ def setup_instance_stores(cluster):
     if _verify_ssh_connectivity(hosts, 180) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
     xdevs = ['xvdb','xvdc','xvdd','xvde']
-    _setup_instance_stores(hosts, 4, HVM_AMI_ID, xdevs)
+    _setup_instance_stores(hosts, numInstanceStores, HVM_AMI_ID, xdevs)
     ec2.close()    
 
 def reload_collection(cluster,collection):
@@ -2023,6 +2015,9 @@ def attach_to_meta_node(cluster,meta):
     ec2.close()
     
 def restart_node(cluster,port,n=0):
+    """
+    Restart a specific Solr node by specifying the cluster, port and node index.
+    """
     ec2 = _connect_ec2()    
     hosts = _aws_cluster_hosts(ec2, cluster)
     ec2.close()
@@ -2039,19 +2034,3 @@ def restart_node(cluster,port,n=0):
         _status('Restarting Solr on '+host+':89'+port)
         _restart_solr(host, port)
         run('cat cloud/fabcloud-restart'+port+'.out')        
-    
-def custom_ami(cluster):
-    """
-    TODO: This task is still under construction!
-    """
-    # upgrade the repos, see: https://rostlab.org/owiki/index.php/RPM_package_repository_for_RHEL/SUSE/CentOS
-    # install nc, collectd, s3cmd, ntp
-    # install git, subversion
-    # bashrc for user
-    # install java
-    # install solr
-    # install rabbitmq
-    ec2 = _connect_ec2()    
-    hosts = _aws_cluster_hosts(ec2, cluster)
-    with settings(host_string=hosts[0]):
-        sudo('yum install collectd')

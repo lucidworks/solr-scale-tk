@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
 import java.util.Map;
@@ -57,7 +58,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   
   private static long dateBaseMs = 1368045398000l;
   
-  private static ThreadLocal<Random> rands = new ThreadLocal<Random>() {
+  public static ThreadLocal<Random> rands = new ThreadLocal<Random>() {
     
     final AtomicInteger inits = new AtomicInteger(0);
     
@@ -73,6 +74,33 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
       return new Zipf(30000);
     }
   };
+  
+  public IndexingSampler() {
+    fields = new FieldSpec[] {
+        new FieldSpec("integer1_i", "i:1:100000:u:10"),
+        new FieldSpec("integer2_i", "i:1:10000:u:50"),
+        new FieldSpec("long1_l", "l:1:10000000:u:10"),
+        new FieldSpec("long2_l", "l:1:50000000:u:20"),
+        new FieldSpec("float1_f", "f:1:2:u:10"),
+        new FieldSpec("float2_f", "f:1:1:u:10"),
+        new FieldSpec("double1_d", "d:1:6:u:20"),
+        new FieldSpec("double2_d", "d:1:4:u:40"),
+        new FieldSpec("timestamp1_tdt", "l:1:31536000:u:0"),
+        new FieldSpec("timestamp2_tdt", "l:1:31536000:u:10"),
+        new FieldSpec("string1_s", "s:10:20000:u:0"),
+        new FieldSpec("string2_s", "s:12:5000:u:0"),
+        new FieldSpec("string3_s", "s:4:1000:u:10"),
+        new FieldSpec("boolean1_b", "i:1:1:u:0"),
+        new FieldSpec("boolean2_b", "i:1:1:u:50"),
+        new FieldSpec("text1_en", "s:15:20000:z:0", 20),
+        new FieldSpec("text2_en", "s:20:100000:z:0", 30),      
+        new FieldSpec("text3_en", "s:8:30000:z:0", 80)      
+      };        
+  }
+  
+  public FieldSpec[] getFields() {
+    return fields;
+  }
   
   @Override
   public Arguments getDefaultParameters() {
@@ -94,59 +122,17 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     super.setupTest(context);
 
     log = getLogger().getChildLogger("LW-IndexingSampler");
-    
-    commitAtEnd = "true".equals(context.getParameter("COMMIT_AT_END"));
-    
-    int ref = refCounter.incrementAndGet();
-    
-    // setup for data generation
-    synchronized (this.getClass()) {
-      if (englishWords == null) {
-        try {
-          englishWords = loadWords(context.getParameter("WORD_LIST"));
-        } catch (Exception exc) {
-          if (exc instanceof RuntimeException)
-            throw (RuntimeException)exc;
-          else
-            throw new RuntimeException(exc);
-        }
-        log.info("Loaded "+englishWords.size()+" words from "+context.getParameter("WORD_LIST"));
-      }
-    }
-    
-    fields = new FieldSpec[] {
-      new FieldSpec("integer1_i", "i:1:100000:u:10"),
-      new FieldSpec("integer2_i", "i:1:10000:u:50"),
-      //new FieldSpec("integer3_i", "i:1:1000:u:20"),
-      new FieldSpec("long1_l", "l:1:10000000:u:10"),
-      new FieldSpec("long2_l", "l:1:50000000:u:20"),
-      //new FieldSpec("long3_l", "l:1:25000000:u:30"),
-      new FieldSpec("float1_f", "f:1:2:u:10"),
-      new FieldSpec("float2_f", "f:1:1:u:10"),
-      new FieldSpec("double1_d", "d:1:6:u:20"),
-      new FieldSpec("double2_d", "d:1:4:u:40"),
-      new FieldSpec("timestamp1_tdt", "l:1:31536000:u:0"),
-      new FieldSpec("timestamp2_tdt", "l:1:31536000:u:10"),
-      new FieldSpec("string1_s", "s:10:20000:u:0"),
-      new FieldSpec("string2_s", "s:12:5000:u:0"),
-      new FieldSpec("string3_s", "s:4:1000:u:10"),
-      //new FieldSpec("string4_ss", "s:10:30000:z:0"),
-      new FieldSpec("string5_ss", "s:6:20000:u:30"),
-      new FieldSpec("boolean1_b", "i:1:1:u:0"),
-      new FieldSpec("boolean2_b", "i:1:1:u:50"),
-      new FieldSpec("text1_en", "s:15:10000:u:0", 10),
-      //new FieldSpec("text2_en", "s:20:109582:u:0", 30),      
-      new FieldSpec("text3_en", "s:8:20000:z:0", 40)      
-    };    
-    
-    String zkHost = context.getParameter("ZK_HOST");
-    String collection = context.getParameter("COLLECTION");
-    getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
-    cloudSolrServer = new CloudSolrServer(zkHost);
-    cloudSolrServer.setDefaultCollection(collection);
-    cloudSolrServer.connect();
-    getLogger().info("Connected to SolrCloud; collection=" + collection);
 
+    Map<String,String> params = new HashMap<String,String>();
+    Iterator<String> paramNames = context.getParameterNamesIterator();
+    while (paramNames.hasNext()) {
+      String paramName = paramNames.next();
+      String param = context.getParameter(paramName);
+      if (param != null)
+        params.put(paramName, param);
+    }
+    setup(params);
+    
     synchronized (IndexingSampler.class) {
       if (reporter == null) {
         reporter = ConsoleReporter.forRegistry(metrics)
@@ -154,6 +140,39 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
             .convertDurationsTo(TimeUnit.MILLISECONDS).build();
         reporter.start(1, TimeUnit.MINUTES);
       }
+    }        
+  }
+
+  public void setup(Map<String,String> params) {
+    commitAtEnd = "true".equals(params.get("COMMIT_AT_END"));
+    
+    // setup for data generation
+    String wordListResource = params.get("WORD_LIST");
+    if (wordListResource == null)
+      wordListResource = "100K_words_en.txt";
+    
+    synchronized (this.getClass()) {
+      if (englishWords == null) {
+        try {
+          englishWords = loadWords(wordListResource);
+        } catch (Exception exc) {
+          if (exc instanceof RuntimeException)
+            throw (RuntimeException)exc;
+          else
+            throw new RuntimeException(exc);
+        }
+        //log.info("Loaded "+englishWords.size()+" words from "+wordListResource);
+      }
+    }
+        
+    String zkHost = params.get("ZK_HOST");
+    if (zkHost != null) {
+      getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
+      String collection = params.get("COLLECTION");
+      cloudSolrServer = new CloudSolrServer(zkHost);
+      cloudSolrServer.setDefaultCollection(collection);
+      cloudSolrServer.connect();
+      getLogger().info("Connected to SolrCloud; collection=" + collection);
     }
   }
   
@@ -245,7 +264,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   /**
    * Build up a test document.
    */
-  protected SolrInputDocument buildSolrInputDocument(String docId, Random rand) {
+  public SolrInputDocument buildSolrInputDocument(String docId, Random rand) {
     SolrInputDocument inDoc = new SolrInputDocument();
     inDoc.setField("id", docId);
     for (FieldSpec f : fields) {
@@ -343,7 +362,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   // Borrowed from the Pig DataGenerator
   //
 
-  static enum Datatype {
+  public static enum Datatype {
     INT, LONG, FLOAT, DOUBLE, STRING
   };
 
@@ -351,10 +370,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     UNIFORM, ZIPF
   };
 
-  protected class FieldSpec {
-    String name;
+  public static class FieldSpec {
+    public String name;
     String arg;
-    Datatype datatype;
+    public Datatype datatype;
     DistributionType distype;
     int avgsz;
     int card;
@@ -494,7 +513,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     }
   }
   
-  class UniformRandomGenerator extends RandomGenerator {
+  static class UniformRandomGenerator extends RandomGenerator {
     int card;
 
     public UniformRandomGenerator(int a, int c) {
@@ -546,7 +565,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     }
   }  
 
-  abstract class RandomGenerator {
+  static abstract class RandomGenerator {
 
     protected int avgsz;
     protected boolean hasMapFile; // indicating whether a map file from
@@ -585,7 +604,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     }
   }
 
-  class ZipfRandomGenerator extends RandomGenerator {
+  static class ZipfRandomGenerator extends RandomGenerator {
     //Zipf z;
 
     public ZipfRandomGenerator(int a, int c) {

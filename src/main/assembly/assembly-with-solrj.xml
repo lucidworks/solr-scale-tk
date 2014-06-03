@@ -11,6 +11,10 @@
 			<unpack>true</unpack>
 			<scope>runtime</scope>
 			<outputDirectory>/</outputDirectory>
+<excludes>
+              <exclude>org.apache.hadoop:>hadoop-core</exclude>
+              <exclude>org.apache.pig:>pig</exclude>
+            </excludes>   
 		</dependencySet>
     <dependencySet>
       <unpack>true</unpack>
