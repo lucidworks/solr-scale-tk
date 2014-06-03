@@ -400,6 +400,9 @@ def _get_instance_type(ec2, cluster):
     return None
 
 def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
+    
+    _status('Determining Solr Java memory options for running %s Solr nodes on a %s' % (numNodesPerHost, instance_type))
+    
     if instance_type is None or numNodesPerHost <= 0: # garbage in, just use default
         return '-Xms512m -Xmx512m -XX:MaxPermSize=512m -XX:PermSize=256m'
 
@@ -1809,7 +1812,7 @@ def put_file(cluster,local,remotePath=None,num=1):
         _fatal('File %s not found on local workstation!' % localFile)
             
     hosts = _lookup_hosts(cluster, False)
-    scp_hosts = [hosts[0]] if int(num) <= 0 else hosts[0:num]    
+    scp_hosts = [hosts[0]] if int(num) <= 0 else hosts[0:int(num)]    
     remoteDir = REMOTE_USER_HOME_DIR if remotePath is None else remotePath    
     for host in scp_hosts:    
         with settings(host_string=host):
