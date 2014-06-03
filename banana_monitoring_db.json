@@ -26,8 +26,8 @@
       ],
       "list": {
         "0": {
-          "from": "2014-04-14T21:41:04.970Z",
-          "to": "2014-04-14T21:56:04.970Z",
+          "from": "2014-06-03T14:01:40.783Z",
+          "to": "2014-06-03T14:06:40.783Z",
           "field": "event_timestamp",
           "type": "time",
           "mandate": "must",
@@ -70,12 +70,12 @@
             "7d",
             "30d"
           ],
-          "timespan": "15m",
+          "timespan": "5m",
           "timefield": "event_timestamp",
           "timeformat": "",
           "refresh": {
             "enable": true,
-            "interval": 30,
+            "interval": 5,
             "min": 3
           },
           "filter_id": 0,
@@ -122,7 +122,7 @@
             "ids": [
               0
             ],
-            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp midterm&group=true&group.field=host&group.limit=100000",
+            "query": "q=*:*&wt=json&rows=100000&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&fl=event_timestamp midterm&group=true&group.field=host&group.limit=100000",
             "custom": "&fq=collectd_type:load"
           },
           "max_rows": 100000,
@@ -130,7 +130,7 @@
           "group_field": "host",
           "auto_int": true,
           "resolution": 50,
-          "interval": "30s",
+          "interval": "5s",
           "intervals": [
             "auto",
             "1s",
@@ -152,7 +152,7 @@
           "spyable": true,
           "zoomlinks": true,
           "bars": false,
-          "stack": true,
+          "stack": false,
           "points": false,
           "lines": true,
           "legend": true,
@@ -165,7 +165,8 @@
             "value_type": "cumulative",
             "query_as_alias": false
           },
-          "title": "CPU Load"
+          "title": "CPU Load",
+          "lines_smooth": true
         },
         {
           "error": false,
@@ -188,8 +189,9 @@
             "ids": [
               0
             ],
-            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=75&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&sort=event_timestamp desc",
-            "custom": "&fq=(level:ERROR OR level:WARN)"
+            "query": "q=*:*&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&sort=event_timestamp desc&rows=75&wt=json",
+            "custom": "&fq=(level:ERROR OR level:WARN)",
+            "basic_query": "q=*:*&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&sort=event_timestamp desc&rows=75"
           },
           "size": 15,
           "pages": 5,
@@ -217,7 +219,8 @@
           "normTimes": true,
           "spyable": true,
           "time_field": "event_timestamp",
-          "title": "Solr Errors / Warnings"
+          "title": "Solr Errors / Warnings",
+          "saveOption": "json"
         }
       ]
     },
@@ -240,7 +243,7 @@
             "ids": [
               0
             ],
-            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp value&group=true&group.field=host&group.limit=100000",
+            "query": "q=*:*&wt=json&rows=100000&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&fl=event_timestamp value&group=true&group.field=host&group.limit=100000",
             "custom": "&collectd_type:memory"
           },
           "max_rows": 100000,
@@ -248,63 +251,6 @@
           "group_field": "host",
           "auto_int": true,
           "resolution": 25,
-          "interval": "30s",
-          "intervals": [
-            "auto",
-            "1s",
-            "1m",
-            "5m",
-            "10m",
-            "30m",
-            "1h",
-            "3h",
-            "12h",
-            "1d",
-            "1w",
-            "1M",
-            "1y"
-          ],
-          "fill": 0,
-          "linewidth": 3,
-          "timezone": "browser",
-          "spyable": true,
-          "zoomlinks": true,
-          "bars": false,
-          "stack": true,
-          "points": false,
-          "lines": true,
-          "legend": true,
-          "x-axis": true,
-          "y-axis": true,
-          "percentage": false,
-          "interactive": true,
-          "options": true,
-          "tooltip": {
-            "value_type": "cumulative",
-            "query_as_alias": false
-          },
-          "title": "Memory"
-        },
-        {
-          "span": 8,
-          "editable": true,
-          "type": "histogram",
-          "loadingEditor": false,
-          "mode": "values",
-          "time_field": "event_timestamp",
-          "queries": {
-            "mode": "all",
-            "ids": [
-              0
-            ],
-            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=100000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&fl=event_timestamp write&group=true&group.field=host&group.limit=100000",
-            "custom": "&fq=collectd_type:disk_time"
-          },
-          "max_rows": 100000,
-          "value_field": "write",
-          "group_field": "host",
-          "auto_int": true,
-          "resolution": 100,
           "interval": "10s",
           "intervals": [
             "auto",
@@ -322,12 +268,12 @@
             "1y"
           ],
           "fill": 0,
-          "linewidth": 3,
+          "linewidth": 2,
           "timezone": "browser",
           "spyable": true,
           "zoomlinks": true,
           "bars": false,
-          "stack": true,
+          "stack": false,
           "points": false,
           "lines": true,
           "legend": true,
@@ -340,7 +286,66 @@
             "value_type": "cumulative",
             "query_as_alias": false
           },
-          "title": "Disk Writes"
+          "title": "Memory",
+          "lines_smooth": true
+        },
+        {
+          "span": 8,
+          "editable": true,
+          "type": "histogram",
+          "loadingEditor": false,
+          "mode": "values",
+          "time_field": "event_timestamp",
+          "queries": {
+            "mode": "all",
+            "ids": [
+              0
+            ],
+            "query": "q=*:*&wt=json&rows=100000&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&fl=event_timestamp write&group=true&group.field=host&group.limit=100000",
+            "custom": "&fq=collectd_type:disk_time"
+          },
+          "max_rows": 100000,
+          "value_field": "write",
+          "group_field": "host",
+          "auto_int": true,
+          "resolution": 100,
+          "interval": "1s",
+          "intervals": [
+            "auto",
+            "1s",
+            "1m",
+            "5m",
+            "10m",
+            "30m",
+            "1h",
+            "3h",
+            "12h",
+            "1d",
+            "1w",
+            "1M",
+            "1y"
+          ],
+          "fill": 0,
+          "linewidth": 2,
+          "timezone": "browser",
+          "spyable": true,
+          "zoomlinks": true,
+          "bars": false,
+          "stack": false,
+          "points": false,
+          "lines": true,
+          "legend": true,
+          "x-axis": true,
+          "y-axis": true,
+          "percentage": false,
+          "interactive": true,
+          "options": true,
+          "tooltip": {
+            "value_type": "cumulative",
+            "query_as_alias": false
+          },
+          "title": "Disk Writes",
+          "lines_smooth": true
         }
       ]
     },
@@ -394,13 +399,15 @@
             "ids": [
               0
             ],
-            "query": "q=*:*&df=message&df=host&df=path&df=type&wt=json&rows=5000&fq=event_timestamp:[2014-04-14T21:41:04.970Z%20TO%202014-04-14T21:56:04.970Z]&sort=event_timestamp desc"
+            "query": "q=*:*&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&sort=event_timestamp desc&rows=5000&wt=json",
+            "basic_query": "q=*:*&fq=event_timestamp:[2014-06-03T14:01:40.783Z%20TO%202014-06-03T14:06:40.783Z]&sort=event_timestamp desc&rows=5000"
           },
           "field_list": false,
           "status": "Stable",
           "trimFactor": 300,
           "normTimes": true,
-          "time_field": "event_timestamp"
+          "time_field": "event_timestamp",
+          "saveOption": "json"
         }
       ]
     }
@@ -426,5 +433,6 @@
     "load_elasticsearch": true,
     "load_elasticsearch_size": 20,
     "load_local": true,
-    "hide": false
+    "hide": false,
+    "dropdown_collections": false
   },
