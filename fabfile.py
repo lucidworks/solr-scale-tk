@@ -23,8 +23,8 @@ AWS_REGION = None
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_AMI_ID = 'ami-1e6b9d76'
-HVM_AMI_ID = 'ami-e2749d8a'
+AWS_AMI_ID = 'ami-e4bc468c'
+HVM_AMI_ID = 'ami-f8b54f90'
 AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -33,7 +33,7 @@ REMOTE_USER_HOME_DIR = '/home/' + SSH_USER
 AWS_KEY_NAME = 'solr-scale-tk'
 SSH_KEYFILE_PATH_ON_LOCAL = '~/.ssh/solr-scale-tk.pem'
 REMOTE_ZK_DIR = REMOTE_USER_HOME_DIR + '/zookeeper-3.4.6'
-REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.8.1'
+REMOTE_SOLR_DIR = REMOTE_USER_HOME_DIR + '/solr-4.9.0'
 REMOTE_SOLR_JAVA_HOME = REMOTE_USER_HOME_DIR + '/jdk1.7.0_55'
 CLOUD_DIR = REMOTE_USER_HOME_DIR + '/cloud'
 CTL_SCRIPT = 'solr-ctl.sh'
@@ -601,6 +601,7 @@ function (Settings) {
 });
 '''
     bananaConfigJs = bananaWebapp + '/config.js'
+    run('rm '+bananaConfigJs)
     _fab_append(bananaConfigJs, solrConfigJs)
     
 def _setup_instance_stores(hosts, numStores, ami, xdevs):
@@ -675,9 +676,9 @@ def new_ec2_instances(cluster,
                       instance_type=AWS_INSTANCE_TYPE,
                       ami=AWS_AMI_ID,
                       key=AWS_KEY_NAME,
-                      numInstanceStores=None,
                       az=AZ,
-                      placement_group=None):
+                      placement_group=None,
+                      skipStores=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -694,10 +695,12 @@ def new_ec2_instances(cluster,
       maxWait (int, optional): Maximum number of seconds to wait for the instances to be online;
         default is 180 seconds.
       instance_type (optional): Amazon EC2 instance instance_type, default is m3.medium
-      numInstanceStores: Number of instance stores devices to map; default is determined by the
-        instance instance_type. For example, if you launch an m3.xlarge, then Amazon makes 2 x 40GB SSD
-        disks available as instance stores and the framework knows to mount these at /vol0 and
-        /vol1. In most cases you want to leave this value unset and let the framework decide.
+      placement_group (optional): Launches one or more instances in an AWS placement group, which
+        gives better network performance between instances working in a cluster; you must create
+        the placement group from the AWS console before using this option.
+      skipStores (optional): Skips creation and mounting of filesystems; useful when you don't
+        need access to the additional instance storage devices.
+      
 
     Returns:
       hosts (list): A list of public DNS names for the instances launched by this command.
@@ -730,9 +733,7 @@ def new_ec2_instances(cluster,
             This is a safety mechanism to prevent you from affecting other clusters.''' % (len(existing), cluster))
 
     # device mappings
-    if numInstanceStores is None:
-        numInstanceStores = instanceStoresByType[instance_type]
-    
+    numInstanceStores = instanceStoresByType[instance_type]    
     if numInstanceStores is None:
         _fatal('Must specify the number of instance stores for instance instance_type: ' % instance_type)
     
@@ -801,8 +802,12 @@ def new_ec2_instances(cluster,
         _fatal('Failed to verify SSH connectivity to all hosts!')
 
     # mount the instance stores on /vol#
-    _status('Making instance store file systems ... please be patient')
-    _setup_instance_stores(hosts, numStores, ami, xdevs)
+    setupInstanceStores = True if skipStores is None else False    
+    if setupInstanceStores:
+        _status('Making instance store file systems ... please be patient')
+        _setup_instance_stores(hosts, numStores, ami, xdevs)
+    else:
+        _warn('Skipping instance store configuration!')
      
     # This is disabled to avoid uploading AWS creds in advertently
     #               
