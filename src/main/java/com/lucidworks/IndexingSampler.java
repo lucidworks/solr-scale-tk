@@ -6,14 +6,8 @@ import java.io.InputStreamReader;
 import java.io.Serializable;
 import java.net.ConnectException;
 import java.net.SocketException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Random;
-import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,13 +28,20 @@ import com.codahale.metrics.Timer;
 
 import sdsu.algorithms.data.Zipf;
 
-public class IndexingSampler extends AbstractJavaSamplerClient implements
-    Serializable {
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+
+public class IndexingSampler extends AbstractJavaSamplerClient implements Serializable {
   private static final long serialVersionUID = 1L;
 
+  static {
+    TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+  }
+
+  private static final SimpleDateFormat ISO_8601_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.'S'Z'");
+
   // keeps track of how many tests are running this sampler and when there are
-  // none,
-  // a final hard commit is sent.
+  // none, a final hard commit is sent.
   private static AtomicInteger refCounter = new AtomicInteger(0);
   
   private static List<String> englishWords = null;
@@ -50,6 +51,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
   //protected Random rand;
   protected FieldSpec[] fields;
   protected boolean commitAtEnd = true;
+  protected HttpIndexPipelineClient indexPipelineClient;
 
   private static final MetricRegistry metrics = new MetricRegistry();
   private static final Timer sendBatchToSolrTimer = metrics.timer("sendBatchToSolr");
@@ -114,6 +116,9 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     defaultParameters.addArgument("RANDOM_SEED", "5150");
     defaultParameters.addArgument("WORD_LIST", "100K_words_en.txt");
     defaultParameters.addArgument("COMMIT_AT_END", "true");
+    defaultParameters.addArgument("FUSION_INDEX_PIPELINE",
+            "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
+    defaultParameters.addArgument("ENDPOINT_TYPE", "fusion");
     return defaultParameters;
   }
 
@@ -164,15 +169,34 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
         //log.info("Loaded "+englishWords.size()+" words from "+wordListResource);
       }
     }
-        
-    String zkHost = params.get("ZK_HOST");
-    if (zkHost != null) {
+
+    String type = params.get("ENDPOINT_TYPE");
+    String collection = params.get("COLLECTION");
+    if ("solrcloud".equals(type)) {
+      String zkHost = params.get("ZK_HOST");
+      if (zkHost == null || zkHost.trim().length() == 0)
+        throw new IllegalArgumentException("ZK_HOST is required when using ENDPOINT_TYPE="+type);
+
       getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
-      String collection = params.get("COLLECTION");
       cloudSolrServer = new CloudSolrServer(zkHost);
       cloudSolrServer.setDefaultCollection(collection);
       cloudSolrServer.connect();
       getLogger().info("Connected to SolrCloud; collection=" + collection);
+
+    } else if ("fusion".equals(type)) {
+      String fusionIndexPipelineEndpoint = params.get("FUSION_INDEX_PIPELINE");
+      if (fusionIndexPipelineEndpoint == null || fusionIndexPipelineEndpoint.trim().length() == 0)
+        throw new IllegalArgumentException("FUSION_INDEX_PIPELINE is required when using ENDPOINT_TYPE="+type);
+
+      // add on the collection part
+      fusionIndexPipelineEndpoint = fusionIndexPipelineEndpoint.replace("${collection}", collection);
+      try {
+        indexPipelineClient = new HttpIndexPipelineClient(fusionIndexPipelineEndpoint);
+      } catch (Exception exc) {
+        throw new RuntimeException(exc);
+      }
+    } else {
+      throw new IllegalArgumentException(type+" not supported!");
     }
   }
   
@@ -247,8 +271,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     if (numDocsPerLoop < batchSize)
       numDocsPerLoop = batchSize; // min is batchSize
 
+    int totalDocs = 0;
     try {
-      int totalDocs = index(idPrefix, threadId, numDocsPerLoop, batchSize);
+      if (cloudSolrServer != null) {
+        totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerLoop, batchSize);
+      } else {
+        totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerLoop, batchSize);
+      }
       log.info("Thread " + threadId + " finished sending " + totalDocs + " docs to Solr.");
       result.setSuccessful(true);
     } catch (Exception exc) {
@@ -286,7 +315,68 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     return inDoc;
   }
 
-  protected int index(String idPrefix, String threadId, int numDocsPerLoop, int batchSize) throws Exception {
+  protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerLoop, int batchSize) throws Exception {
+    int totalDocs = 0;
+    JSONArray batch = new JSONArray();
+
+    Random rand = rands.get();
+    Timer.Context constructBatchTimerCtxt = null;
+    for (int d = 0; d < numDocsPerLoop; d++) {
+
+      if (constructBatchTimerCtxt == null) {
+        constructBatchTimerCtxt = constructBatch.time();
+      }
+
+      String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
+      JSONObject nextDoc = buildJsonInputDocument(docId, rand);
+      batch.add(nextDoc);
+
+      if (batch.size() >= batchSize) {
+        constructBatchTimerCtxt.stop();
+        constructBatchTimerCtxt = null; // reset
+
+        totalDocs += sendJsonBatch(batch, 10, 3);
+        if (totalDocs % 1000 == 0) {
+          log.info("Thread " + threadId + " has sent " + totalDocs
+                  + " docs so far.");
+        }
+      }
+    }
+
+    // last batch
+    if (batch.size() > 0) {
+      totalDocs += sendJsonBatch(batch, 10, 3);
+    }
+
+    return totalDocs;
+  }
+
+  public JSONObject buildJsonInputDocument(String docId, Random rand) {
+    JSONObject doc = new JSONObject();
+    for (FieldSpec f : fields) {
+      if (f.name.endsWith("_ss")) {
+        int numVals = rand.nextInt(20)+1;
+        for (int n=0; n < numVals; n++) {
+          Object val = f.next(rand);
+          if (val != null) {
+            doc.put(f.name, val);
+          }
+        }
+      } else {
+        Object val = f.next(rand);
+        if (val != null) {
+          if (val instanceof Date) {
+            doc.put(f.name, ISO_8601_DATE_FMT.format((Date)val));
+          } else {
+            doc.put(f.name, val);
+          }
+        }
+      }
+    }
+    return doc;
+  }
+
+  protected int indexSolrDocument(String idPrefix, String threadId, int numDocsPerLoop, int batchSize) throws Exception {
     log.info(String.format("Starting indexing sampler test with: threadId=%s, batchSize=%d, numDocsPerLoop=%d",
             threadId, batchSize, numDocsPerLoop));
 
@@ -322,6 +412,42 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements
     }
 
     return totalDocs;
+  }
+
+  protected int sendJsonBatch(JSONArray batch, int waitBeforeRetry, int maxRetries) throws Exception {
+    int sent = 0;
+    final Timer.Context sendTimerCtxt = sendBatchToSolrTimer.time();
+    try {
+      indexPipelineClient.postDocsToPipeline(batch);
+      sent = batch.size();
+    } catch (Exception exc) {
+
+      Throwable rootCause = SolrException.getRootCause(exc);
+      boolean wasCommError =
+              (rootCause instanceof ConnectException ||
+                      rootCause instanceof ConnectTimeoutException ||
+                      rootCause instanceof NoHttpResponseException ||
+                      rootCause instanceof SocketException);
+
+      if (wasCommError) {
+        if (--maxRetries > 0) {
+          log.warn("ERROR: " + rootCause + " ... Sleeping for "
+                  + waitBeforeRetry + " seconds before re-try ...");
+          Thread.sleep(waitBeforeRetry * 1000L);
+          sent = sendJsonBatch(batch, waitBeforeRetry, maxRetries);
+        } else {
+          log.error("No more retries available! Add batch failed due to: " + rootCause);
+          throw exc;
+        }
+      } else {
+        throw exc;
+      }
+    } finally {
+      sendTimerCtxt.stop();
+    }
+
+    batch.clear();
+    return sent;
   }
 
   protected int sendBatch(List<SolrInputDocument> batch, int waitBeforeRetry, int maxRetries) throws Exception {

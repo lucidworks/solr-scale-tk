@@ -15,10 +15,10 @@
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
-          <stringProp name="LoopController.loops">1</stringProp>
+          <stringProp name="LoopController.loops">10000</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">5</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">3</stringProp>
+        <stringProp name="ThreadGroup.num_threads">20</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">5</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
@@ -26,37 +26,17 @@
         <stringProp name="ThreadGroup.delay"></stringProp>
       </ThreadGroup>
       <hashTree>
-        <JavaSampler guiclass="JavaTestSamplerGui" testclass="JavaSampler" testname="indexer1" enabled="true">
+        <JavaSampler guiclass="JavaTestSamplerGui" testclass="JavaSampler" testname="query" enabled="true">
           <elementProp name="arguments" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" enabled="true">
             <collectionProp name="Arguments.arguments">
               <elementProp name="ZK_HOST" elementType="Argument">
                 <stringProp name="Argument.name">ZK_HOST</stringProp>
-                <stringProp name="Argument.value">localhost:2181</stringProp>
+                <stringProp name="Argument.value">localhost:9983</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">timsFusionColl2</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="BATCH_SIZE" elementType="Argument">
-                <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">100</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
-                <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">100000</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="THREAD_ID" elementType="Argument">
-                <stringProp name="Argument.name">THREAD_ID</stringProp>
-                <stringProp name="Argument.value">${__threadNum}</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="ID_PREFIX" elementType="Argument">
-                <stringProp name="Argument.name">ID_PREFIX</stringProp>
-                <stringProp name="Argument.value">jm5</stringProp>
+                <stringProp name="Argument.value">perf_1x2</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
@@ -64,29 +44,9 @@
                 <stringProp name="Argument.value">5150</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
-              <elementProp name="WORD_LIST" elementType="Argument">
-                <stringProp name="Argument.name">WORD_LIST</stringProp>
-                <stringProp name="Argument.value">100K_words_en.txt</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="COMMIT_AT_END" elementType="Argument">
-                <stringProp name="Argument.name">COMMIT_AT_END</stringProp>
-                <stringProp name="Argument.value">true</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="FUSION_INDEX_PIPELINE" elementType="Argument">
-                <stringProp name="Argument.name">FUSION_INDEX_PIPELINE</stringProp>
-                <stringProp name="Argument.value">http://localhost:8765/lucid/api/v1/index-pipelines/conn_solr/collections/${collection}/index</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="ENDPOINT_TYPE" elementType="Argument">
-                <stringProp name="Argument.name">ENDPOINT_TYPE</stringProp>
-                <stringProp name="Argument.value">fusion</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="classname">com.lucidworks.IndexingSampler</stringProp>
+          <stringProp name="classname">com.lucidworks.QuerySampler</stringProp>
         </JavaSampler>
         <hashTree/>
       </hashTree>

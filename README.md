@@ -46,6 +46,55 @@ At a minimum you should allow TCP traffic to ports: 8983, 8984-8989, SSH, and 21
 
 You'll also need to create an keypair (using the Amazon console) named solr-scale-tk (you can rename the key used by the framework, see: AWS_KEY_NAME). After downloading the keypair file (solr-scale-tk.pem), save it to ~/.ssh/ and change permissions: chmod 600 ~/.ssh/solr-scale-tk.pem
 
+Local Setup
+========
+
+You can also use the Fabric tasks against a local Solr cluster running on localhost. This requires two additional
+setup tasks:
+
+1) Enable passphraseless SSH to localhost, i.e. ssh username@localhost should log in immediately without prompting you for a password. Typically, this is accomplished by doing:
+```
+$ ssh-keygen -t dsa -P '' -f ~/.ssh/id_dsa
+$ cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
+```
+2) Add the "local" cluster to your ~/.sstk file, such as:
+```
+{
+  "clusters": {
+    "local": {
+      "name": "local",
+      "hosts": [ "localhost" ],
+      "provider:": "local",
+      "ssh_user": "dstruan",
+      "ssh_keyfile_path_on_local": "",
+      "username": "${ssh_user}",
+      "user_home": "/Users/${username}",
+      "solr_java_home": "/Library/Java/JavaVirtualMachines/jdk1.7.0_67.jdk/Contents/Home",
+      "zk_home": "${user_home}/zookeeper-3.4.5",
+      "zk_data_dir": "${zk_home}/data",
+      "instance_type": "m3.large",
+      "sstk_cloud_dir": "${user_home}/projects/solr-scale-tk/cloud",
+      "solr_tip": "${user_home}/solr-4.10.0",
+      "fusion_home": "${user_home}/fusion"
+    }
+  }
+}
+```
+The "local" cluster object overrides property settings that allows the Fabric tasks to work with your local directory structure / environment. For instance, the location of the Solr directory to use to launch the cluster will be resolved to: /Users/dstruan/solr-4.10.0 because the ${user_home} variable is resolved dynamically to /Users/dstruan.
+
+Once you've defined all the properties of the local cluster, you can run any of the Fabric tasks that take a cluster ID using: fab <task>:local, such as fab setup_solrcloud:local,... will setup a SolrCloud cluster using the local property settings.
+
+You can also override any of the global settings defined in fabfile.py using ~/.sstk. For instance, if you want to change the default value for the AWS_HVM_AMI_ID setting, you can do:
+
+```
+{
+  "clusters": {
+     ...
+  },
+  "AWS_HVM_AMI_ID": "?"
+}
+```
+
 Overview
 ========
 

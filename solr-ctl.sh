@@ -1,40 +1,30 @@
 #!/bin/bash
 
-ZK_CLIENT_TIMEOUT="20000"
-GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution"
-SOLR_JAVA_OPTS="-server -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS \
--XX:-UseSuperWord \
--XX:NewRatio=3 \
--XX:SurvivorRatio=4 \
--XX:TargetSurvivorRatio=90 \
--XX:MaxTenuringThreshold=8 \
--XX:+UseConcMarkSweepGC \
--XX:+CMSScavengeBeforeRemark \
--XX:PretenureSizeThreshold=64m \
--XX:CMSFullGCsBeforeCompaction=1 \
--XX:+UseCMSInitiatingOccupancyOnly \
--XX:CMSInitiatingOccupancyFraction=70 \
--XX:CMSTriggerPermRatio=80 \
--XX:CMSMaxAbortablePrecleanTime=6000 \
--XX:+CMSParallelRemarkEnabled \
--XX:+ParallelRefProcEnabled \
--XX:+UseLargePages \
--XX:+AggressiveOpts"
+THIS_SCRIPT="$0"
+while [ -h "$THIS_SCRIPT" ] ; do
+  ls=`ls -ld "$THIS_SCRIPT"`
+  # Drop everything prior to ->
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    THIS_SCRIPT="$link"
+  else
+    THIS_SCRIPT=`dirname "$THIS_SCRIPT"`/"$link"
+  fi
+done
 
-#SOLR_JAVA_OPTS="-server -XX:-UseSuperWord -XX:+UseG1GC -XX:MaxGCPauseMillis=5000 -XX:+HeapDumpOnOutOfMemoryError -DzkClientTimeout=$ZK_CLIENT_TIMEOUT $GC_LOG_OPTS"
-REMOTE_JMX_OPTS="-Djava.net.preferIPv4Stack=true -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
+SCRIPT_DIR=`dirname "$THIS_SCRIPT"`
+SCRIPT_DIR=`cd "$SCRIPT_DIR"; pwd`
 
-SCRIPT_DIR=/home/ec2-user/cloud
 MODE=$1
 
-if [ "$MODE" != "upconfig" ] && [ "$MODE" != "zk-init" ] && [ "$MODE" != "kill" ] && [ "$MODE" != "setup" ] &&  [ "$MODE" != "stop" ] && [ "$MODE" != "restart" ]; then
+if [ "$MODE" != "upconfig" ] && [ "$MODE" != "zk-init" ] && [ "$MODE" != "setup" ]; then
   echo "MODE parameter $MODE not valid!"
   echo " "
   echo "Usage: ./solr-ctl.sh <MODE>"
   echo " "
-  echo "  where MODE is one of: upconfig, zk-init, kill, setup, stop, restart"
+  echo "  where MODE is one of: upconfig, zk-init, setup"
   echo " "
-  echo "  Example: Restart Solr running on port 8984: ./solr-ctl.sh restart 84"
+  echo "  Example: Setup node running on port 8984: ./solr-ctl.sh setup 84"
   echo " "
   exit 1
 fi
@@ -60,30 +50,6 @@ if [ "$MODE" == "zk-init" ]; then
   exit 0
 fi
 
-if [ "$MODE" == "kill" ]; then
-  SOLR_PORT="$2"
-
-  cd $SOLR_TOP/cloud$SOLR_PORT
-  java -jar start.jar STOP.PORT=79$SOLR_PORT STOP.KEY=key --stop || true
-  sleep 5
-
-  for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
-    do
-      kill -9 $ID
-      echo "Killed process $ID"
-  done
-
-  sleep 1
-
-  for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
-    do
-      echo "Failed to kill previous java process $ID ... script fails."
-      exit 1
-  done
-
-  exit 0
-fi
-
 if [ "$ZK_HOST" == "" ]
 then
   echo "ZK_HOST environment variable not set! Please update your solr-ctl-env.sh script."
@@ -106,32 +72,6 @@ if [ "$SOLR_PORT" == "" ]; then
 fi
 
 cd $SOLR_TOP/cloud$SOLR_PORT
-java -jar start.jar STOP.PORT=79$SOLR_PORT STOP.KEY=key --stop || true
-sleep 5
-
-for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
-  do
-    kill -9 $ID
-    echo "Killed process $ID"
-done
-
-sleep 1
-
-for ID in `ps waux | grep start.jar | grep 89$SOLR_PORT | awk '{print $2}' | sort -r`
-  do
-    echo "Failed to kill previous java process $ID ... script fails."
-    exit 1
-done
-
-sleep 2 
-
-# backup the log files
-mv $SOLR_TOP/cloud$SOLR_PORT/logs/solr.log $SOLR_TOP/cloud$SOLR_PORT/logs/solr_log_`date +"%Y%m%d_%H%M"`
-mv $SOLR_TOP/cloud$SOLR_PORT/logs/gc.log $SOLR_TOP/cloud$SOLR_PORT/logs/gc_log_`date +"%Y%m%d_%H%M"`
-
-if [ "$MODE" == "stop" ]; then
-  exit 0
-fi
 
 if [ "$MODE" == "setup" ]; then
 
@@ -176,39 +116,7 @@ if [ "$MODE" == "setup" ]; then
   rm -rf $SOLR_TOP/cloud$SOLR_PORT/logs/*
   rm -rf $SOLR_TOP/cloud$SOLR_PORT/solr/*shard*
   
-  cp ~/rabbitmq/jars/*.jar $SOLR_TOP/cloud$SOLR_PORT/lib/ext/
+  cp ~/rabbitmq/jars/*.jar $SOLR_TOP/cloud$SOLR_PORT/lib/ext/ || true
   
   exit 0
 fi
-
-if [ "$SOLR_JAVA_MEM" == "" ]; then
-  SOLR_JAVA_MEM="-Xms512m -Xmx512m -XX:MaxPermSize=256m -XX:PermSize=256m"
-fi
-
-# Get the public-hostname from the AWS metadata service
-echo "Calling out to AWS metadata service to get hostname"
-MYHOST=`curl -s http://169.254.169.254/latest/meta-data/public-hostname`
-#EC2_INSTANCE_TYPE=`curl -s http://169.254.169.254/latest/meta-data/instance-type`
-
-echo "Starting Solr server(s) from $SOLR_TOP using:"
-echo "    MYHOST          = $MYHOST"
-echo "    ZK_HOST         = $ZK_HOST"
-echo "    SOLR_JAVA_HOME  = $SOLR_JAVA_HOME"
-echo "    SOLR_PORT       = 89$SOLR_PORT"
-echo "    SOLR_JAVA_OPTS  = $SOLR_JAVA_OPTS"
-echo "    SOLR_JAVA_MEM   = $SOLR_JAVA_MEM"
-echo "    REMOTE_JMX_OPTS = $REMOTE_JMX_OPTS"
-
-cd $SOLR_TOP/cloud$SOLR_PORT
-nohup $SOLR_JAVA_HOME/bin/java -Xss256k $SOLR_JAVA_OPTS $SOLR_JAVA_MEM $REMOTE_JMX_OPTS \
-  -Djava.rmi.server.hostname=$MYHOST \
-  -Dcom.sun.management.jmxremote.port=10$SOLR_PORT \
-  -Dcom.sun.management.jmxremote.rmi.port=10$SOLR_PORT \
-  -Xloggc:$SOLR_TOP/cloud$SOLR_PORT/logs/gc.log -XX:OnOutOfMemoryError="$SCRIPT_DIR/oom_solr.sh $SOLR_PORT %p" \
-  -Dlog4j.debug -Dhost="$MYHOST" -Dlog4j.configuration=file:///$SCRIPT_DIR/log4j.properties -DzkHost="$ZK_HOST" \
-  -DSTOP.PORT=79$SOLR_PORT -DSTOP.KEY=key -Djetty.port=89$SOLR_PORT \
-  -Dsolr.solr.home=$SOLR_TOP/cloud$SOLR_PORT/solr \
-  -Duser.timezone="UTC" \
-  -jar start.jar 1>$SOLR_TOP/cloud$SOLR_PORT.log 2>&1 &
-  
-echo "Started Solr server with zkHost=$ZK_HOST on $MYHOST:89$SOLR_PORT."

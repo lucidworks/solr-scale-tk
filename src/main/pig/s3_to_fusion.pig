@@ -1,9 +1,10 @@
-REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-1.2.0-SNAPSHOT-rc2-0.jar';
+REGISTER 's3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar'
+-- REGISTER '/Users/timpotter/dev/lw/projects/solr-scale-tk/target/solr-scale-tk-0.1-exe.jar'
 
-set solr.zkhost '$zkHost';
-set solr.collection '$collection';
-set lww.buffer.docs.size $batch;
-set lww.commit.on.close true;
+-- s3://solr-scale-tk/pig/s3_to_fusion.pig
+-- s3://solr-scale-tk/pig/output/v8/
+-- s3://solr-scale-tk/pig/output/foo/
+-- -p RED=21 -p batch=500 -p ENDPOINT=http://localhost:8765/lucid/api/v1/index-pipelines/conn_solr/collections/foo/index
 
 SET mapred.map.tasks.speculative.execution false;
 SET mapred.reduce.tasks.speculative.execution false;
@@ -12,11 +13,6 @@ SET mapred.child.java.opts -Xmx1g;
 SET mapred.task.timeout 12000000;
 SET mapred.max.tracker.failures 20;
 SET mapred.map.max.attempts 20;
-
--- s3://solr-scale-tk/pig/s3_to_solr.pig
--- s3://solr-scale-tk/pig/output/v8/
--- s3://solr-scale-tk/pig/output/foo/
--- -p RED=3 -p collection=perf_15x2 -p batch=500 -p zkHost=ec2-54-165-110-183.compute-1.amazonaws.com:2181,ec2-54-165-57-148.compute-1.amazonaws.com:2181,ec2-54-165-52-224.compute-1.amazonaws.com:2181/tim
 
 data = load '$INPUT' using PigStorage() as (id: chararray,
   integer1_i: int,
@@ -57,4 +53,4 @@ to_sort = foreach data generate id,
   'text3_en', text3_en;
   
 to_solr = order to_sort by id ASC parallel $RED;
-store to_solr into 's3://solr-scale-tk/pig/output/foo' using com.lucidworks.hadoop.pig.SolrStoreFunc();
+store to_solr into 'foo' using com.lucidworks.pig.FusionIndexPipelineStoreFunc('$ENDPOINT','$batch');
