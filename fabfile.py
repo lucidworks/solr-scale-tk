@@ -389,7 +389,9 @@ log4j.appender.rabbitmq.layout=com.plant42.log4j.layouts.JSONLayout
     return cfg
 
 def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost):
-    if cluster == "local":
+
+    provider = _env(cluster, 'provider')
+    if provider == "local":
         solrHost = "localhost"
     else:
         solrHost = '`curl -s http://169.254.169.254/latest/meta-data/public-hostname`'
@@ -552,13 +554,18 @@ def _zk_ensemble(cluster, hosts):
 
     sshUser = _env(cluster, 'ssh_user')
 
+    provider = _env(cluster, 'provider')
+
     for z in range(0, n):
         with settings(host_string=hosts[z]), hide('output', 'running', 'warnings'):
             # stop zk
             run(zkDir + '/bin/zkServer.sh stop')
 
             # setup to clean snapshots
-            if cluster != 'local':
+            if provider == 'local':
+                local('mkdir -p '+zkDataDir+' || true')
+                local('rm -rf '+zkDataDir+'/*')
+            else:
                 put('zk_cron.sh', zkDir)
                 run('chmod +x %s/zk_cron.sh && echo "0 * * * *  %s/zk_cron.sh" > %s/crondump && crontab < %s/crondump' % (zkDir, zkDir, zkDir, zkDir))
                 sudo('mkdir -p '+zkDataDir+' || true')
@@ -935,7 +942,56 @@ def _integ_host_with_meta(cluster, host, metaHost):
         collectdConf = '/etc/collectd.conf'
         _fab_append(collectdConf, collectdNetwork, use_sudo=True)
         sudo('service collectd restart')
-    
+
+def _lookup_overseer(cluster):
+    """
+    Retrieve overseer leader node for the specified cluster.
+
+    Arg Usage:
+      cluster: Identifies the SolrCloud cluster you want to get status for.
+    """
+
+    hosts = _lookup_hosts(cluster, False)
+    statusAction = 'http://%s:8984/solr/admin/collections?action=OVERSEERSTATUS&wt=json' % hosts[0]
+    try:
+        response = urllib2.urlopen(statusAction)
+        solr_resp = response.read()
+        overseerStatus = json.loads(solr_resp)
+        leader = overseerStatus['leader']
+        return leader
+    except urllib2.HTTPError as e:
+        _error('Overseer status retrieval failed due to: %s' % str(e) + '\n' + e.read())
+
+def _add_overseer_role(hosts, nodeName):
+    _info('Adding overseer role to node: %s' % nodeName)
+    roleAction = 'http://%s:8984/solr/admin/collections?action=addrole&role=overseer&node=%s&wt=json' % (
+        hosts[0], nodeName)
+    _info('Requesting: %s' % roleAction)
+    try:
+        response = urllib2.urlopen(roleAction)
+        response_s = response.read()
+        solr_resp = json.loads(response_s)
+        respHeader = solr_resp['responseHeader']
+        if respHeader['status'] != 0:
+            _error('Unable to add role. \n%s' % response_s)
+        else:
+            _info('Successfully added overseer role to node %s' % nodeName)
+    except urllib2.HTTPError as e:
+        _error('Unable to add overseer role to node due to: %s' % str(e) + '\n' + e.read())
+
+def _assign_overseer_nodes(hosts, numNodesPerHost, num_overseer_nodes, totalNodes):
+    overseerNodes = set({})
+    if int(num_overseer_nodes) > 0:
+        # let's designate some random nodes as overseers
+        for x in range(0, int(num_overseer_nodes)):
+            overseer = random.randrange(0, totalNodes)
+            # print('overseer = %d , hosts = %d , numNodesPerHost = %d' % (overseer, n, numNodesPerHost))
+            oHost = overseer / numNodesPerHost
+            oPort = overseer % numNodesPerHost
+            # _info('Using host: %d and port: 89%d as overseer' % (oHost, 84 + oPort))
+            overseerNodes.add('%s:89%d_solr' % (hosts[oHost], 84 + oPort))
+    return overseerNodes
+
 
 # -----------------------------------------------------------------------------
 # Fabric actions begin here ... anything above this are private helper methods.
@@ -1157,7 +1213,8 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
 
     # setup local if needed
-    if cluster == "local":
+    provider = _env(cluster, 'provider')
+    if provider == "local":
         cloudDir = os.path.expanduser(_env(cluster, 'sstk_cloud_dir'))
         if os.path.isdir(cloudDir) is False:
             os.makedirs(cloudDir)
@@ -1554,16 +1611,18 @@ def mine(user=None):
 
         clusterList.append(cluster)
 
-    # to be consistent, if the user has defined a local cluster, show it in the output
+    # to be consistent, if the user has defined any local clusters, include in the output
     if isMe:
         sstk_cfg = _get_config()
-        if sstk_cfg.has_key('clusters') and sstk_cfg['clusters'].has_key('local'):
+        if sstk_cfg.has_key('clusters'):
             if byUser.has_key(user) is False:
                 byUser[user] = {}
-            clusters = byUser[user]
-            clusters['local'] = []
-            clusters['local'].append('%s' % ('localhost'))
-            clusterList.append('local')
+            clusters = sstk_cfg['clusters']
+            for clusterId in clusters.keys():
+                cluster = clusters[clusterId]
+                if cluster.has_key('provider') and cluster['provider'] == 'local':
+                    byUser[user][clusterId] = ['localhost: '+cluster['solr_tip']]
+                    clusterList.append(clusterId)
 
     for u in byUser.keys():
         clusters = byUser[u]    
@@ -1581,6 +1640,9 @@ def mine(user=None):
                 sstk_cfg['clusters'] = {}
             if sstk_cfg['clusters'].has_key(clusterId) is False:
                 sstk_cfg['clusters'][clusterId] = {}
+            else:
+                if sstk_cfg['clusters'][clusterId].has_key('provider') and sstk_cfg['clusters'][clusterId]['provider'] == 'local':
+                    continue
             sstk_cfg['clusters'][clusterId]['hosts'] = hosts
             sstk_cfg['clusters'][clusterId]['provider'] = _config['provider']
             sstk_cfg['clusters'][clusterId]['name'] = clusterId
@@ -2245,7 +2307,7 @@ def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',numDocs
     for n in range(offsetIndex,numCollections):
         name = prefix + str(n)
         new_collection(cluster,name=name, rf=int(rf), shards=int(shards), conf=conf)
-        local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d' % (name, zkHost, numDocs))
+        #local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d' % (name, zkHost, numDocs))
         
 def jconsole(cluster):
     """
@@ -2407,6 +2469,127 @@ def restart_node(cluster,port,n=0):
     with settings(host_string=host):
         _status('Restarting Solr on '+host+':89'+port)
         _restart_solr(cluster, host, port)
+
+def add_overseer_role(cluster, n, port):
+    """
+    Add the overseer role to a node
+    """
+    hosts = _lookup_hosts(cluster, False)
+    host = hosts[int(n)]
+    nodeName = "%s:89%d_solr" % (host, int(port))
+    _add_overseer_role(hosts, nodeName)
+
+def cluster_status(cluster, collection=None, shard=None):
+    """
+    Retrieve status for the specified cluster.
+
+    Arg Usage:
+      cluster: Identifies the SolrCloud cluster you want to get status for.
+      collection (optional): restricts status info to this collection.
+      shard (optional, comma-separated list): restricts status info to this shard/set of shards.
+    """
+
+    hosts = _lookup_hosts(cluster, False)
+
+    params = '&wt=json&indent=on'
+    if collection is not None:
+        params += '&collection=%s' % collection
+    if shard is not None:
+        params += '&shard=%s' % shard
+
+    statusAction = 'http://%s:8984/solr/admin/collections?action=CLUSTERSTATUS%s' % (hosts[0], params)
+
+    _info('Retrieving cluster status using:\n%s' % statusAction)
+    try:
+        response = urllib2.urlopen(statusAction)
+        solr_resp = response.read()
+        _info('Cluster status retrieval succeeded\n' + solr_resp)
+    except urllib2.HTTPError as e:
+        _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
+
+def clusterprop(cluster, name, value):
+    """
+    Sets cluster wide properties using Solr's CLUSTERPROP Collections API
+    :param cluster: the cluster name on which the property is to be set
+    :param name: the name of the property
+    :param value: the value of the property
+    """
+    hosts = _lookup_hosts(cluster, False)
+    statusAction = 'http://%s:8984/solr/admin/collections?action=clusterprop&name=%s&val=%s&wt=json' % (hosts[0], name, value)
+    try:
+        response = urllib2.urlopen(statusAction)
+        solr_resp = response.read()
+        _info('Cluster property set successfully:\n' + solr_resp)
+        return True
+    except urllib2.HTTPError as e:
+        _error('Cluster property could not be set due to: %s' % str(e) + '\n' + e.read())
+        return False
+
+def stats(cluster):
+    """
+    Get cluster stats such as collections, total docs, replicas/node, replicas/host etc
+    """
+    hosts = _lookup_hosts(cluster, False)
+    # number of collections, total docs, replicas/node, replicas/host, docs/collection
+    collections = []
+    listAction = 'http://%s:8984/solr/admin/collections?action=list&wt=json' % hosts[0]
+    try:
+        response = urllib2.urlopen(listAction)
+        solr_resp = response.read()
+        collectionList = json.loads(solr_resp)
+        collections = collectionList['collections']
+        _status('Collections: %d' % len(collections))
+    except urllib2.HTTPError as e:
+        _error('Unable to fetch collections list due to: HTTP status %d: %s' % (e.code, str(e.reason)))
+    except: # catch all exceptions
+        e = sys.exc_info()[0]
+        _error('Unable to fetch collections list due to: %s' % str(e))
+
+    numNodesPerHost = _num_solr_nodes_per_host(cluster)
+    ports = [84 + x for x in range(0, numNodesPerHost)]
+
+    replicasPerHost = dict({})
+    replicasPerNode = dict({})
+    print('')
+    _info('{0:50s} {1:>10s}'.format('Node', 'Replicas'))
+    for h in hosts:
+        replicasPerHost[h] = []
+        for p in ports:
+            coreAdminStatus = 'http://%s:89%d/solr/admin/cores?action=status&wt=json' % (h, p)
+            try:
+                response = urllib2.urlopen(coreAdminStatus)
+                solr_resp = response.read()
+                coreStatus = json.loads(solr_resp)
+                replicas = coreStatus['status'].keys()
+                hostPort = '%s:89%d' % (h, p)
+                replicasPerNode[hostPort] = replicas
+                replicasPerHost[h].extend(replicas)
+                #_status('Node: %s has %d replicas' % (hostPort, len(replicas)))
+                _status('{0:50s} {1:10d}'.format(hostPort, len(replicas)))
+            except urllib2.HTTPError as e:
+                _error('Unable to fetch core status for %s:89%d due to: HTTP status %d: %s' % (h, p, e.code, str(e.reason)))
+            except: # catch all exceptions
+                e = sys.exc_info()[0]
+                _error('Unable to fetch core status for %s:89%d due to: %s' % (h, p, str(e)))
+
+    print('')
+    _info('{0:50s} {1:>10s}'.format('Host', 'Replicas'))
+    for h in hosts:
+        _status('{0:50s} {1:10d}'.format(h, len(replicasPerHost[h])))
+        #_status('Host: %s has %d replicas' % (h, len(replicasPerHost[h])))
+
+    print('')
+    _info('{0:25s} {1:>10s}'.format('Collection', 'Documents'))
+    docsPerCollection = dict({})
+    for c in sorted(collections):
+        solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], c), timeout=10)
+        results = solr.search('*:*', **{'rows' : 0})
+        docsPerCollection[c] = results.hits
+        _status('{0:25s} {1:10d}'.format(c, results.hits))
+    print('')
+    _info('{0:25s} {1:10d}'.format('Total Documents', sum(docsPerCollection.values())))
+
+### The following tasks are for working with Lucidworks Fusion services
 
 def _fusion_api(host, apiEndpoint, method='GET', json=None):
     dashd = "" if json is None else " -d '"+json+"'"
