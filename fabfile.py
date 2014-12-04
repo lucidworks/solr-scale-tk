@@ -5,6 +5,7 @@ from fabric.contrib.console import confirm
 from StringIO import StringIO as _strio    
 import boto
 from boto.s3.key import Key as _S3Key
+from random import shuffle
 import boto.ec2
 import time
 import sys
@@ -407,33 +408,21 @@ GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails \
 -XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime"
 
 # These GC settings have shown to work well for a number of common Solr workloads
-GC_TUNE="-XX:-UseSuperWord \
--XX:NewRatio=3 \
+GC_TUNE="-XX:NewRatio=3 \
 -XX:+UseParNewGC \
--XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 \
+-XX:ConcGCThreads=4 \
+-XX:ParallelGCThreads=4 \
 -XX:SurvivorRatio=4 \
 -XX:TargetSurvivorRatio=90 \
 -XX:MaxTenuringThreshold=8 \
 -XX:+UseConcMarkSweepGC \
 -XX:+CMSScavengeBeforeRemark \
 -XX:PretenureSizeThreshold=64m \
--XX:CMSFullGCsBeforeCompaction=1 \
 -XX:+UseCMSInitiatingOccupancyOnly \
 -XX:CMSInitiatingOccupancyFraction=50 \
--XX:CMSTriggerPermRatio=80 \
 -XX:CMSMaxAbortablePrecleanTime=6000 \
 -XX:+CMSParallelRemarkEnabled \
--XX:+ParallelRefProcEnabled \
--XX:+AggressiveOpts"
-
-# Mac OSX and Cygwin don't seem to like the UseLargePages flag
-thisOs=`uname -s`
-# for now, we don't support running this script from cygwin due to problems
-# like not having lsof, ps waux, curl, and awkward directory handling
-if [[ "$thisOs" != "Darwin" && "${thisOs:0:6}" != "CYGWIN" ]]; then
-  # UseLargePages flag causes JVM crash on Mac OSX
-  GC_TUNE="$GC_TUNE -XX:+UseLargePages"
-fi
+-XX:+ParallelRefProcEnabled"
 
 # Set the ZooKeeper connection string if using an external ZooKeeper ensemble
 # e.g. host1:2181,host2:2181/chroot
@@ -623,13 +612,17 @@ def _wait_to_see_solr_up_on_hosts(hostAndPorts, maxWait=180):
         for down in downSet:
             _error(down+' is down!')
 
-def _restart_solr(cluster, host, solrPortBase):
+def _restart_solr(cluster, host, solrPortBase, pauseBeforeRestart=0):
     binSolrScript = _env(cluster, 'solr_tip') + '/bin/solr'
-    zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     solrPort = '89' + solrPortBase
     solrDir =  'cloud'+solrPortBase
     remoteStartCmd = '%s start -cloud -p %s -d %s' % (binSolrScript, solrPort, solrDir)
+    pauseTime = int(pauseBeforeRestart)
     with settings(host_string=host), hide('output', 'running', 'warnings'):
+        _stop_solr(cluster, host, solrPortBase)
+        if pauseTime > 0:
+            _status('Sleeping for %d seconds before starting Solr node on %s:%s' % (pauseTime, host, solrPort))
+            time.sleep(pauseTime)
         _status('Running start on remote: ' + remoteStartCmd)
         run('nohup ' + remoteStartCmd + ' &', pty=False)
         time.sleep(2)
@@ -639,7 +632,7 @@ def _stop_solr(cluster, host, solrPortBase):
     solrPort = '89' + solrPortBase
     remoteStopCmd = '%s stop -p %s' % (binSolrScript, solrPort)
     with settings(host_string=host), hide('output', 'running', 'warnings'):
-        _status('Running stop Solr on '+host+': ' + remoteStopCmd)
+        _status('Running stop Solr on '+host+':'+solrPort+' ~ ' + remoteStopCmd)
         run(remoteStopCmd)
         time.sleep(2)
 
@@ -787,22 +780,22 @@ def _num_solr_nodes_per_host(cluster):
     cloudEnv = _read_cloud_env(cluster)
     return 1 if cloudEnv.has_key('NODES_PER_HOST') is False else int(cloudEnv['NODES_PER_HOST'])
 
-def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=0, waitAfterKill=30):
+def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=0, overseer=None, pauseBeforeRestart=0):
 
     remoteSolrDir = _env(cluster, 'solr_tip')
 
     # determine which servers to patch if they weren't passed into this method
     if solrHostsAndPortsToRestart is None:
         hosts = _cluster_hosts(cloud, cluster)
-    
+
         numNodes = _num_solr_nodes_per_host(cluster)
         activePorts = []
         for n in range(0,numNodes):
             activePorts.append(str(84 + n))
-    
-        # upload the latest version of the script before restarting    
+
+        # upload the latest version of the script before restarting
         # determine the active Solr nodes on each host
-        solrHostsAndPortsToRestart = {}            
+        solrHostsAndPortsToRestart = {}
         for host in hosts:
             solrHostsAndPortsToRestart[host] = set([]) # set is important
             with settings(host_string=host), hide('output', 'running', 'warnings'):
@@ -810,7 +803,19 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
                     if _fab_exists(remoteSolrDir + '/cloud' + port):
                         solrHostsAndPortsToRestart[host].add(port)
 
-    _status('Doing a rolling restart (which can take a while so be patient) ...')
+    if overseer is None:
+        _info('Looking up overseer node')
+        try:
+            overseer = _lookup_overseer(cluster)
+            _info('Overseer running at %s' % overseer)
+            # strip _solr from the end
+            overseer = overseer[:len(overseer) - 5]
+        except:
+            _error('Unable to determine overseer leader, proceeding to restart cluster anyway')
+
+    counter = 0
+
+    nodesToRestart = []
 
     zkHost = _read_cloud_env(cluster)['ZK_HOST']
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
@@ -827,20 +832,50 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
 
         for port in solrHostsAndPortsToRestart[solrHost]:
             solrSrvr = '%s:89%s' % (solrHost, port)
-            _status('Restarting Solr node on %s' % solrSrvr)
-            _stop_solr(cluster, solrHost, port)
-            _status('Sleeping for 30 seconds before restarting Solr on '+solrSrvr)
-            time.sleep(int(waitAfterKill)) # need to sleep before restarting so /live_nodes gets updated and leaders migrate
-            _restart_solr(cluster, solrHost, port)
+            nodesToRestart.append(solrSrvr)
+
+    # randomize the list of nodes to restart
+    # helps avoid restarting all nodes on the same host around the same time
+    shuffle(nodesToRestart)
+
+    _status('Doing a rolling restart of %d nodes (which can take a while so be patient) ...' % len(nodesToRestart))
+
+    for solrSrvr in nodesToRestart:
+        if overseer is None or solrSrvr != overseer:
+            _status('\nRestarting Solr node on %s' % solrSrvr)
+            solrHost = solrSrvr.split(':')[0]
+            port = solrSrvr.split(':')[1][2:] # skip the 89 part
+            _restart_solr(cluster, solrHost, port, pauseBeforeRestart)
             if int(wait) <= 0:
                 _status('Restarted ... waiting to see Solr come back up ...')
                 _wait_to_see_solr_up_on_hosts([solrSrvr], maxWait=180)
             else:
                 _status('Restarted ... sleeping for '+str(wait)+' seconds before proceeding ...')
                 time.sleep(int(wait))
-            
+
+            # give some incremental progress reporting as big clusters can take a long time to restart
+            counter += 1
+            if counter > 0 and counter % 5 == 0:
+                _info('Restarted %d nodes so far ...' % counter)
+        else:
+            if overseer is not None:
+                _warn('Skipping restart on overseer, will restart '+overseer+' last.')
+
+    if overseer is not None:
+        _status('Restarting Solr node on %s' % overseer)
+        overseerHost = overseer.split(':')[0]
+        overseerPort = overseer.split(':')[1][2:] # skip the 89 part
+        _restart_solr(cluster, overseerHost, overseerPort, 30) # force wait for new overseer to get elected after killing current
+        if int(wait) <= 0:
+            _status('Restarted ... waiting to see Solr come back up ...')
+            _wait_to_see_solr_up_on_hosts([overseer], maxWait=180)
+        else:
+            _status('Restarted ... sleeping for '+str(wait)+' seconds before proceeding ...')
+            time.sleep(int(wait))
+
+
     _info('Rolling restart completed.')
-    
+
 def _configure_banana(metaHost):
     # Setup the correct hostname for the banana UI
     bananaWebapp = user_home + '/slk-4.7.0/solr-4.7.0/SiLK/banana-webapp/webapp'
@@ -1228,7 +1263,7 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
             _copy_dir(exampleDir, cloud84Dir)
             os.rename(cloud84Dir+'/solr/collection1', cloud84Dir+'/solr/cloud')
             os.remove(cloud84Dir+'/solr/cloud/core.properties')
-            shutil.rmtree(cloud84Dir+'/solr/cloud/data')
+            shutil.rmtree(cloud84Dir+'/solr/cloud/data', True)
             shutil.rmtree(cloud84Dir+'/example-schemaless')
             shutil.rmtree(cloud84Dir+'/exampledocs')
             shutil.rmtree(cloud84Dir+'/example-DIH')
@@ -2283,7 +2318,7 @@ def index_docs(cluster,collection,numDocs=20000):
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d' % (collection, zkHost, int(numDocs)))
 
-def restart_solr(cluster,wait=0,waitAfterKill=30):
+def restart_solr(cluster,wait=0,pauseBeforeRestart=0):
     """
     Initiates a rolling restart of a Solr cluster.
     
@@ -2292,7 +2327,7 @@ def restart_solr(cluster,wait=0,waitAfterKill=30):
     wait of 180 seconds.
     """
     cloud = _provider_api()    
-    _rolling_restart_solr(cloud, cluster, None, wait, waitAfterKill)
+    _rolling_restart_solr(cloud, cluster, None, wait, None, pauseBeforeRestart)
     cloud.close()
 
 def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',numDocs=10000,offset=0):
@@ -2450,7 +2485,7 @@ def attach_to_meta_node(cluster,meta):
         with settings(host_string=host): #, hide('output', 'running', 'warnings'):
             _integ_host_with_meta(cluster, host, metaHost)
     # restart each Solr node, waiting to see them come back up
-    _rolling_restart_solr(cloud, cluster, None, 0)
+    _rolling_restart_solr(cloud, cluster, None, 0, None, 0)
     cloud.close()
     
 def restart_node(cluster,port,n=0):
@@ -2468,7 +2503,7 @@ def restart_node(cluster,port,n=0):
     
     with settings(host_string=host):
         _status('Restarting Solr on '+host+':89'+port)
-        _restart_solr(cluster, host, port)
+        _restart_solr(cluster, host, port, 10)
 
 def add_overseer_role(cluster, n, port):
     """
