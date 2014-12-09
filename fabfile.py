@@ -618,11 +618,13 @@ def _restart_solr(cluster, host, solrPortBase, pauseBeforeRestart=0):
     solrDir =  'cloud'+solrPortBase
     remoteStartCmd = '%s start -cloud -p %s -d %s' % (binSolrScript, solrPort, solrDir)
     pauseTime = int(pauseBeforeRestart)
+    hostAndPort = host+':'+solrPort
     with settings(host_string=host), hide('output', 'running', 'warnings'):
-        _stop_solr(cluster, host, solrPortBase)
-        if pauseTime > 0:
-            _status('Sleeping for %d seconds before starting Solr node on %s:%s' % (pauseTime, host, solrPort))
-            time.sleep(pauseTime)
+        if _is_solr_up(hostAndPort):
+            _stop_solr(cluster, host, solrPortBase)
+            if pauseTime > 0:
+                _status('Sleeping for %d seconds before starting Solr node on %s' % (pauseTime, hostAndPort))
+                time.sleep(pauseTime)
         _status('Running start on remote: ' + remoteStartCmd)
         run('nohup ' + remoteStartCmd + ' &', pty=False)
         time.sleep(2)
