@@ -2635,7 +2635,7 @@ def stats(cluster):
 
 def _fusion_api(host, apiEndpoint, method='GET', json=None):
     dashd = "" if json is None else " -d '"+json+"'"
-    local("curl -u admin:password123 -H 'Content-type: application/json' -X %s%s http://%s:8765/lucid/api/v1/%s" % (method, dashd, host, apiEndpoint))
+    local("curl -u admin:password123 -H 'Content-type: application/json' -X %s%s http://%s:8765/api/v1/%s" % (method, dashd, host, apiEndpoint))
 
 def fusion_nodes(cluster):
     hosts = _lookup_hosts(cluster)
@@ -2734,6 +2734,9 @@ def fusion_start(cluster,api=1,ui=1,connectors=1):
 
 
 def fusion_stop(cluster):
+    """
+    Stops Fusion services on nodes in a cluster.
+    """
     hosts = _lookup_hosts(cluster)
     fusionHome = _env(cluster, 'fusion_home')
     fusionBin = fusionHome+'/bin'
@@ -2757,12 +2760,20 @@ def fusion_endpoints(cluster,n,coll):
         str += ('http://%s:8765/lucid/api/v1/index-pipelines/conn_solr/collections/%s/index' % (host, coll))
     print(str)
 
+def fusion_status(cluster):
+    """
+    Get status information about a Fusion cluster (as well as the underlying SolrCloud cluster)
+    """
+    hosts = _lookup_hosts(cluster)
+    fusionHome = _env(cluster, 'fusion_home')
+    for host in hosts:
+        with settings(host_string=host):
+            run(fusionHome+'/bin/fusion status')
+    cluster_status(cluster)
+
 def fusion_setup(cluster,vers='1.1.2'):
     """
-    Downloads and installs the specified Fusion version.
-    :param cluster:
-    :param vers:
-    :return:
+    Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
     cloud = _provider_api()
     hosts = _cluster_hosts(cloud, cluster)
