@@ -2771,7 +2771,7 @@ def fusion_status(cluster):
             run(fusionHome+'/bin/fusion status')
     cluster_status(cluster)
 
-def fusion_setup(cluster,vers='1.1.2'):
+def fusion_setup(cluster,vers='1.1.4'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
@@ -2799,7 +2799,7 @@ def fusion_setup(cluster,vers='1.1.2'):
 
     _info('\n\nFusion installed on %d hosts' % len(hosts))
 
-def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.1.2'):
+def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.1.4'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """

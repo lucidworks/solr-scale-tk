@@ -16,16 +16,10 @@ Make sure you're running Python 2.7 and have installed Fabric and boto dependenc
 
 On the Mac, you can do:
 
+```
 sudo easy_install fabric
 sudo easy_install boto
-
-Configure boto to connect to AWS by adding your credentials to: ~/.boto
 ```
-[Credentials]
-aws_access_key_id = ?
-aws_secret_access_key = ?
-```
-For more information about boto, please see: https://github.com/boto/boto
 
 For more information about fabric, see: http://docs.fabfile.org/en/1.8/
 
@@ -37,27 +31,41 @@ sudo python setup.py install
 ```
 Note, you do not need to know any Python in order to use this framework.
 
-AWS Setup
-========
-
-You'll need to setup a security group named solr-scale-tk (or update the fabfile.py to change the name).
-
-At a minimum you should allow TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
-
-You'll also need to create an keypair (using the Amazon console) named solr-scale-tk (you can rename the key used by the framework, see: AWS_KEY_NAME). After downloading the keypair file (solr-scale-tk.pem), save it to ~/.ssh/ and change permissions: chmod 600 ~/.ssh/solr-scale-tk.pem
-
 Local Setup
 ========
 
-You can also use the Fabric tasks against a local Solr cluster running on localhost. This requires two additional
-setup tasks:
+The framework supports running a local single-node cluster on your workstation or a remote cluster running in the Amazon cloud (EC2). In fact, you can have multiple local clusters, such as if you need to test different versions of SolrCloud or Fusion.
+
+To setup a local cluster, do:
 
 1) Enable passphraseless SSH to localhost, i.e. ssh username@localhost should log in immediately without prompting you for a password. Typically, this is accomplished by doing:
 ```
 $ ssh-keygen -t dsa -P '' -f ~/.ssh/id_dsa
 $ cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
 ```
-2) Add the "local" cluster to your ~/.sstk file, such as:
+2) Run the *setup_local* task to configure a local cluster 
+
+For instance:
+
+```
+fab setup_local:local,~/dev/lucidworks,fusionVers=1.1.2
+```
+
+This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them to a local path provided as a task parameter (~/dev/lucidworks). Specifically, you'll end up having:
+
+```
+~/dev/lucidworks/solr-4.10.2
+~/dev/lucidworks/zookeeper-3.4.6
+~/dev/lucidworks/fusion
+```
+
+Of course, if you already have Solr/ZooKeeper/Fusion downloaded, you can manually copy them into ~/dev/lucidworks/ to save re-downloading them; just be sure to name the directories based on the versions expected by the script.
+
+After installing, the *setup_local* task will save the settings in your ~/.sstk file and start SolrCloud and Fusion services on your local workstation.
+
+NOTE: even though Fusion includes an embedded version of Solr, using the Solr-Scale-Toolkit requires an external SolrCloud and ZooKeeper setup, which is why the setup_local task downloads ZooKeeper and Solr separately.
+
+The "local" cluster definition is saved to ~/.sstk file as JSON:
 ```
 {
   "clusters": {
@@ -65,24 +73,24 @@ $ cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
       "name": "local",
       "hosts": [ "localhost" ],
       "provider:": "local",
-      "ssh_user": "dstruan",
+      "ssh_user": "YOU",
       "ssh_keyfile_path_on_local": "",
       "username": "${ssh_user}",
-      "user_home": "/Users/${username}",
+      "user_home": "~/dev/lucidworks",
       "solr_java_home": "/Library/Java/JavaVirtualMachines/jdk1.7.0_67.jdk/Contents/Home",
-      "zk_home": "${user_home}/zookeeper-3.4.5",
+      "zk_home": "${user_home}/zookeeper-3.4.6",
       "zk_data_dir": "${zk_home}/data",
       "instance_type": "m3.large",
-      "sstk_cloud_dir": "${user_home}/projects/solr-scale-tk/cloud",
-      "solr_tip": "${user_home}/solr-4.10.0",
+      "sstk_cloud_dir": "${user_home}/cloud",
+      "solr_tip": "${user_home}/solr-4.10.2",
       "fusion_home": "${user_home}/fusion"
     }
   }
 }
 ```
-The "local" cluster object overrides property settings that allows the Fabric tasks to work with your local directory structure / environment. For instance, the location of the Solr directory to use to launch the cluster will be resolved to: /Users/dstruan/solr-4.10.0 because the ${user_home} variable is resolved dynamically to /Users/dstruan.
+Behind the scenes, the "local" cluster object overrides property settings that allow the Fabric tasks to work with your local directory structure / environment. For instance, the location of the Solr directory to use to launch the cluster will be resolved to: ~/dev/lucidworks/solr-4.10.2 because the ${user_home} variable is resolved dynamically to ~/dev/lucidworks.
 
-Once you've defined all the properties of the local cluster, you can run any of the Fabric tasks that take a cluster ID using: fab <task>:local, such as fab setup_solrcloud:local,... will setup a SolrCloud cluster using the local property settings.
+Once the local cluster is defined, you can run any of the Fabric tasks that take a cluster ID using: fab <task>:local, such as fab setup_solrcloud:local,... will setup a SolrCloud cluster using the local property settings.
 
 You can also override any of the global settings defined in fabfile.py using ~/.sstk. For instance, if you want to change the default value for the AWS_HVM_AMI_ID setting, you can do:
 
@@ -95,25 +103,22 @@ You can also override any of the global settings defined in fabfile.py using ~/.
 }
 ```
 
-setup_local
--------------
-Alternatively, you can use the setup_local task to write the local cluster configuration for you. For instance:
+AWS Setup
+========
 
+Configure boto to connect to AWS by adding your credentials to: ~/.boto
 ```
-fab setup_local:myFusion,~/dev/lucidworks,fusionVers=1.1.2
+[Credentials]
+aws_access_key_id = ?
+aws_secret_access_key = ?
 ```
+For more information about boto, please see: https://github.com/boto/boto
 
-This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them to a local path provided as a task parameter (~/dev/lucidworks). Specifically, you'll end up having:
+You'll need to setup a security group named solr-scale-tk (or update the fabfile.py to change the name).
 
-```
-~/dev/lucidworks/solr-4.10.2
-~/dev/lucidworks/zookeeper-3.4.6
-~/dev/lucidworks/fusion
-```
+At a minimum you should allow TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
 
-Of course, if you already have Solr/ZooKeeper/Fusion downloaded, you can manually copy them into ~/dev/lucidworks to save re-downloading them; just be sure to name the directories based on the versions expected by the script.
-
-After installing, the setup_local task will save the settings in your ~/.sstk file and start SolrCloud and Fusion services on your local workstation.
+You'll also need to create an keypair (using the Amazon console) named solr-scale-tk (you can rename the key used by the framework, see: AWS_KEY_NAME). After downloading the keypair file (solr-scale-tk.pem), save it to ~/.ssh/ and change permissions: chmod 600 ~/.ssh/solr-scale-tk.pem
 
 Overview
 ========
