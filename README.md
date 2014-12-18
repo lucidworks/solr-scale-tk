@@ -95,6 +95,24 @@ You can also override any of the global settings defined in fabfile.py using ~/.
 }
 ```
 
+Alternatively, you can use the setup_local task to write the local cluster configuration for you. For instance:
+
+```
+fab setup_local:myFusion,~/dev/lucidworks,fusionVers=1.1.2
+```
+
+This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them in ~/dev/lucidworks. Specifically, you'll end up having:
+
+```
+~/dev/lucidworks/solr-4.10.2
+~/dev/lucidworks/zookeeper-3.4.6
+~/dev/lucidworks/fusion
+```
+
+Of course, if you already have Solr/ZooKeeper/Fusion downloaded, you can manually copy them into ~/dev/lucidworks to save re-downloading them; just be sure to name the directories based on the versions expected by the script.
+
+After installing, the setup_local task will save the settings in your ~/.sstk file and start SolrCloud and Fusion services on your local workstation.
+
 Overview
 ========
 

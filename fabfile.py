@@ -6,6 +6,7 @@ from StringIO import StringIO as _strio
 import boto
 from boto.s3.key import Key as _S3Key
 from random import shuffle
+from urllib import urlretrieve
 import boto.ec2
 import time
 import sys
@@ -1305,7 +1306,6 @@ export SOLR_JAVA_MEM="%s"
     # upload config to ZK
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         to_run = 'mkdir -p '+cloudDir+'/tmp; rm -rf '+cloudDir+'/tmp/*; mkdir -p '+cloudDir+'/tmp/cloud; cp -r '+remoteSolrDir+'/cloud84/solr/cloud/* '+cloudDir+'/tmp/cloud/'
-        _status('Running: '+to_run)
         run(to_run)
         remoteUpconfigCmd = '%s upconfig cloud' % sstkScript
         run(remoteUpconfigCmd)
@@ -1335,7 +1335,7 @@ export SOLR_JAVA_MEM="%s"
                 if volIndex >= numStores:
                     volIndex = volIndex % numStores
                 remoteSetupCmd = '%s setup %s %d' % (sstkScript, solrPort, volIndex)
-                _status('Running setup on remote: ' + remoteSetupCmd)
+                _status('Running setup on '+host+': ' + remoteSetupCmd)
                 run(remoteSetupCmd)
                 time.sleep(2)
                 
@@ -1344,7 +1344,7 @@ export SOLR_JAVA_MEM="%s"
                 solrPort = '89' + solrPortUniq
                 solrDir =  'cloud'+solrPortUniq
                 remoteStartCmd = '%s start -cloud -p %s -d %s' % (binSolrScript, solrPort, solrDir)
-                _status('Running start on remote: ' + remoteStartCmd)
+                _status('Running start on '+host+': ' + remoteStartCmd)
                 run(remoteSolrDir+'/bin/solr stop -p '+solrPort+' || true')
                 run('nohup ' + remoteStartCmd + ' &', pty=False)
                 time.sleep(2)
@@ -2658,7 +2658,16 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
-def fusion_start(cluster,fusion=1,ui=1,connectors=1):
+def fusion_start(cluster,api=1,ui=1,connectors=1):
+    """
+    Start Fusion services across the specified cluster.
+
+    Arg Usage:
+        cluster: Cluster ID
+        api: Number of API services to start across the cluster, must be <= number of nodes in the cluster
+        ui: Number of UI services to start across the cluster
+        connectors: Number of connector services to start across the cluster
+    """
     hosts = _lookup_hosts(cluster)
 
     fusionHome = _env(cluster, 'fusion_home')
@@ -2673,14 +2682,14 @@ def fusion_start(cluster,fusion=1,ui=1,connectors=1):
     fusionInSh += 'FUSION_ZK='+zkHost+'\n'
     fusionInSh += 'FUSION_SOLR_ZK='+zkHost+'\n'
     for host in hosts:
-        with settings(host_string=host): # , hide('output','running'):
+        with settings(host_string=host), hide('output','running'):
             put('common.sh', fusionBin+'/common.sh')
             run('rm -f '+fusionBin+'/fusion.in.sh')
             _status('Uploading fusion.in.sh includes file to '+host)
             _fab_append(fusionBin+'/fusion.in.sh', fusionInSh)
 
     # start fusion, ui, connectors
-    numFusionNodes = int(fusion)
+    numFusionNodes = int(api)
     if numFusionNodes > len(hosts):
         _fatal('Cannot start more than %d Fusion nodes!' % len(hosts))
     numUINodes = int(ui)
@@ -2728,10 +2737,15 @@ def fusion_stop(cluster):
     hosts = _lookup_hosts(cluster)
     fusionHome = _env(cluster, 'fusion_home')
     fusionBin = fusionHome+'/bin'
-    for host in hosts:
-        with settings(host_string=host), hide('output','running'):
-            run('nohup '+fusionBin+'/fusion stop > /dev/null 2>&1 &', pty=False)
-            _status('Stopped Fusion services on '+host)
+
+    provider = _env(cluster, 'provider')
+    if provider == "local":
+        local(fusionBin+'/fusion stop')
+    else:
+        for host in hosts:
+            with settings(host_string=host), hide('output','running'):
+                run('nohup '+fusionBin+'/fusion stop > /dev/null 2>&1 &', pty=False)
+                _status('Stopped Fusion services on '+host)
 
 
 def fusion_endpoints(cluster,n,coll):
@@ -2744,6 +2758,12 @@ def fusion_endpoints(cluster,n,coll):
     print(str)
 
 def fusion_setup(cluster,vers='1.1.2'):
+    """
+    Downloads and installs the specified Fusion version.
+    :param cluster:
+    :param vers:
+    :return:
+    """
     cloud = _provider_api()
     hosts = _cluster_hosts(cloud, cluster)
 
@@ -2775,5 +2795,93 @@ def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.1.2'):
     new_solrcloud(cluster,n=n,instance_type=instance_type)
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,fusion=n)
+
+def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,overwriteExisting=False):
+    """
+    Downloads Solr, ZooKeeper, and optionally Fusion and then builds a local cluster.
+    """
+    sstkCfg = _get_config()
+
+    if sstkCfg.has_key('clusters') is False:
+        sstkCfg['clusters'] = {}
+
+    if sstkCfg['clusters'].has_key(cluster):
+        if bool(overwriteExisting) is False:
+            _fatal('Cluster '+cluster+' already defined in ~/.sstk! Please choose another cluster name to setup on local or pass overwriteExisting=True to overwrite this cluster config.')
+
+    localTip = os.path.expanduser(tip)
+    if os.path.isdir(localTip) is False:
+        os.makedirs(localTip)
+
+    fusionInfo = fusionVers if fusionVers is not None else 'not enabled'
+    _info('Creating local cluster '+cluster+' in '+localTip+' with:\n\tSolr: '+solrVers+'\n\tZooKeeper: '+zkVers+'\n\tFusion: '+fusionInfo)
+
+    cloudDir = localTip+'/cloud'
+    if os.path.isdir(cloudDir) is False:
+        os.makedirs(cloudDir)
+
+    zkTip = ('%s/zookeeper-%s' % (localTip, zkVers))
+    if os.path.isdir(zkTip) is False:
+        zookeeperTgz = 'zookeeper-'+zkVers+'.tar.gz'
+        zookeeperDownloadUrl = 'http://www.eng.lsu.edu/mirrors/apache/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
+        zookeeperLocalTgz = localTip+'/'+zookeeperTgz
+        if os.path.isfile(zookeeperLocalTgz) is False:
+            _status('Downloading ZooKeeper '+zkVers)
+            urlretrieve(zookeeperDownloadUrl, zookeeperLocalTgz)
+        _status('Download complete ... extracting '+zookeeperTgz)
+        local('tar zxf %s -C %s' % (zookeeperLocalTgz, localTip))
+
+    solrTip = ('%s/solr-%s' % (localTip, solrVers))
+    if os.path.isdir(solrTip) is False:
+        solrTgz = 'solr-'+solrVers+'.tgz'
+        solrDownloadUrl = 'http://apache.cs.utah.edu/lucene/solr/'+solrVers+'/'+solrTgz
+        solrLocalTgz = localTip+'/'+solrTgz
+        if os.path.isfile(solrLocalTgz) is False:
+            _status('Downloading Solr '+solrVers)
+            urlretrieve(solrDownloadUrl, solrLocalTgz)
+        _status('Download complete ... extracting '+solrTgz)
+        local('tar zxf %s -C %s' % (solrLocalTgz, localTip))
+
+    fusionTip = None
+    if fusionVers is not None:
+        fusionTip = ('%s/fusion' % (localTip))
+        if os.path.isdir(fusionTip) is False:
+            fusionTgz = 'fusion-'+fusionVers+'.tar.gz'
+            fusionDownloadUrl = 'https://s3.amazonaws.com/download.lucidworks.com/'+fusionTgz
+            fusionLocalTgz = localTip+'/'+fusionTgz
+            if os.path.isfile(fusionLocalTgz) is False:
+                _status('Downloading Fusion '+fusionVers)
+                urlretrieve(fusionDownloadUrl, fusionLocalTgz)
+            _status('Extracting '+fusionTgz)
+            local('tar zxf %s -C %s' % (fusionLocalTgz, localTip))
+
+    _status('Saving local cluster config to ~/.sstk')
+    sstkCfg['clusters'][cluster] = {}
+    cfg = sstkCfg['clusters'][cluster]
+    cfg['name'] = cluster
+    cfg['provider'] = 'local'
+    cfg['instance_type'] = 'm3.large'
+    cfg['hosts'] = ['localhost']
+    cfg['username'] = getpass.getuser()
+    cfg['ssh_user'] = getpass.getuser()
+    cfg['user_home'] = localTip
+    cfg['zk_home'] = zkTip
+    cfg['zk_data_dir'] = '${zk_home}/data'
+    cfg['sstk_cloud_dir'] = cloudDir
+    cfg['solr_tip'] = solrTip
+    cfg['ssh_keyfile_on_local'] = ''
+
+    if fusionTip is not None:
+        cfg['fusion_home'] = fusionTip
+
+    if os.environ['JAVA_HOME'] is not None:
+        cfg['solr_java_home'] = os.environ['JAVA_HOME']
+    _save_config()
+
+    setup_solrcloud(cluster)
+
+    if fusionTip is not None:
+        _status('Local SolrCloud cluster started ... starting Fusion services ...')
+        fusion_start(cluster)
 
 
