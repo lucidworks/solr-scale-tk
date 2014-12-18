@@ -196,7 +196,9 @@ This will scp the solr-core-<VERS>.jar and solr-solrj-<VERS>.jar to each server,
 
 The patch_jars command also supports a few other parameters. For example, let's say you only want to patch the core JAR on the first instance in the cluster:
 
+```
 fab patch_jars:<cluster>,localSolrDir='~/dev/lw/projects/branch_4x/solr',n=0,jars=core
+```
 
 Important Tips
 ========
@@ -212,4 +214,37 @@ And, to kill all of your running instances, such as before signing off for the d
 fab kill_mine
 
 The second most important thing to remember is that you don't want to keep provisioning new nodes. So if you try to run fab new_solrcloud:cloud1... and the nodes have already been provisioned for "cloud1", then you'll be prompted to decide if you are trying to create another cluster or whether you just intend to re-run parts of that command against the already provisioned nodes.
+
+Fusion
+========
+
+Fusion provides the enterprise-grade capabilities needed to design, develop and deploy intelligent search apps at every level of your organization — at any scale. 
+
+To get started, you can run the fusion_demo task to launch a single node cluster in EC2 which includes ZooKeeper, SolrCloud, and Fusion (API, UI, Connectors)
+
+```
+fab fusion_demo:cloud1
+```
+
+The demo launches an m3.large instance in the us-east-1b data center.
+
+Alternatively, can run Fusion with your SolrCloud cluster by running the following additional steps after starting a cluster using the process described above.
+
+1. Pull down the Fusion distribution from S3 and install it on all nodes in the specified cluster (e.g. cloud1):
+
+```
+fab fusion_setup:cloud1
+```
+
+This installs Fusion in /home/ec2-user/fusion. You only need to run fusion_setup once per cluster.
+
+2. Start Fusion services on nodes in your cluster:
+
+```
+fab fusion_start:cloud1
+```
+
+This will start the Fusion API service on port 8765, the Fusion UI service on port 8764, and the connectors service on port 8763. Fusion will use the ZooKeeper and SolrCloud services setup using the toolkit.
+
+After running fusion_start, you can direct your Web browser to the Fusion UI at http://host:8764
 

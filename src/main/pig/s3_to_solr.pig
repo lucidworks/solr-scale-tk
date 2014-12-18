@@ -14,9 +14,9 @@ SET mapred.max.tracker.failures 20;
 SET mapred.map.max.attempts 20;
 
 -- s3://solr-scale-tk/pig/s3_to_solr.pig
--- s3://solr-scale-tk/pig/output/v8/
+-- s3://solr-scale-tk/pig/output/syn_sample_5m
 -- s3://solr-scale-tk/pig/output/foo/
--- -p RED=3 -p collection=perf_15x2 -p batch=500 -p zkHost=ec2-54-165-110-183.compute-1.amazonaws.com:2181,ec2-54-165-57-148.compute-1.amazonaws.com:2181,ec2-54-165-52-224.compute-1.amazonaws.com:2181/tim
+-- -p RED=12 -p collection=tim1x2_n7 -p batch=250 -p zkHost=ec2-107-21-162-234.compute-1.amazonaws.com:2181/rep
 
 data = load '$INPUT' using PigStorage() as (id: chararray,
   integer1_i: int,

@@ -8,6 +8,8 @@ import java.net.ConnectException;
 import java.net.SocketException;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -18,6 +20,7 @@ import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
 import org.apache.log.Logger;
@@ -26,6 +29,7 @@ import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 
+import org.apache.solr.common.params.ModifiableSolrParams;
 import sdsu.algorithms.data.Zipf;
 
 import org.json.simple.JSONArray;
@@ -55,11 +59,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   private static final MetricRegistry metrics = new MetricRegistry();
   private static final Timer sendBatchToSolrTimer = metrics.timer("sendBatchToSolr");
-  private static final Timer constructBatch = metrics.timer("constructBatch");
+  private static final Timer constructDocsTimer = metrics.timer("constructDocsTimer");
   private static ConsoleReporter reporter = null;
   
   private static long dateBaseMs = 1368045398000l;
-  
+
+  private static AtomicInteger joinKeyAI = null;
+
   public static ThreadLocal<Random> rands = new ThreadLocal<Random>() {
     
     final AtomicInteger inits = new AtomicInteger(0);
@@ -119,6 +125,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     defaultParameters.addArgument("FUSION_INDEX_PIPELINE",
             "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
     defaultParameters.addArgument("ENDPOINT_TYPE", "fusion");
+    defaultParameters.addArgument("QUEUE_SIZE", "5000");
     return defaultParameters;
   }
 
@@ -139,6 +146,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     setup(params);
     
     synchronized (IndexingSampler.class) {
+
+      if (joinKeyAI == null)
+        joinKeyAI = new AtomicInteger(0);
+
       if (reporter == null) {
         reporter = ConsoleReporter.forRegistry(metrics)
             .convertRatesTo(TimeUnit.SECONDS)
@@ -182,7 +193,6 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       cloudSolrServer.setDefaultCollection(collection);
       cloudSolrServer.connect();
       getLogger().info("Connected to SolrCloud; collection=" + collection);
-
     } else if ("fusion".equals(type)) {
       String fusionIndexPipelineEndpoint = params.get("FUSION_INDEX_PIPELINE");
       if (fusionIndexPipelineEndpoint == null || fusionIndexPipelineEndpoint.trim().length() == 0)
@@ -198,8 +208,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     } else {
       throw new IllegalArgumentException(type+" not supported!");
     }
+
+    refCounter.incrementAndGet();
   }
-  
+
   protected List<String> loadWords(String classpathRes) throws Exception {
     InputStream stream = getClass().getClassLoader().getResourceAsStream(classpathRes);
     if (stream == null)
@@ -231,24 +243,27 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   @Override
   public void teardownTest(JavaSamplerContext context) {
-    if (cloudSolrServer != null) {
-      int refs = refCounter.decrementAndGet();
-      if (refs == 0) {
-        if (commitAtEnd) {
-          log.info("Sending final commit to SolrCloud.");
-          try {
-            cloudSolrServer.commit();
-          } catch (Exception e) {
-            log.error("Failed to commit due to: " + e, e);
-          }
-        }
+    int refs = refCounter.decrementAndGet();
 
-        if (reporter != null) {
-          reporter.report();
-          reporter.stop();
+    if (refs <= 0) {
+      joinKeyAI.set(0);
+
+      if (commitAtEnd && cloudSolrServer != null) {
+        log.info("Sending final commit to SolrCloud.");
+        try {
+          cloudSolrServer.commit();
+        } catch (Exception e) {
+          log.error("Failed to commit due to: " + e, e);
         }
       }
 
+      if (reporter != null) {
+        reporter.report();
+        reporter.stop();
+      }
+    }
+
+    if (cloudSolrServer != null) {
       try {
         cloudSolrServer.shutdown();
       } catch (Exception ignore) {}
@@ -267,16 +282,17 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     String idPrefix = context.getParameter("ID_PREFIX");
     String threadId = context.getParameter("THREAD_ID");
     int batchSize = context.getIntParameter("BATCH_SIZE", 100);
-    int numDocsPerLoop = context.getIntParameter("NUM_DOCS_PER_LOOP", 10000);
-    if (numDocsPerLoop < batchSize)
-      numDocsPerLoop = batchSize; // min is batchSize
+    int numDocsPerThread = context.getIntParameter("NUM_DOCS_PER_LOOP", 10000);
+    if (numDocsPerThread < batchSize)
+      numDocsPerThread = batchSize; // min is batchSize
+    int queueSize = context.getIntParameter("QUEUE_SIZE", 5000);
 
     int totalDocs = 0;
     try {
       if (cloudSolrServer != null) {
-        totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerLoop, batchSize);
+        totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerThread, queueSize, batchSize);
       } else {
-        totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerLoop, batchSize);
+        totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerThread, batchSize);
       }
       log.info("Thread " + threadId + " finished sending " + totalDocs + " docs to Solr.");
       result.setSuccessful(true);
@@ -312,19 +328,23 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         }
       }
     }
+
+    inDoc.setField("indexed_at_tdt", new Date());
+    inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
+
     return inDoc;
   }
 
-  protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerLoop, int batchSize) throws Exception {
+  protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerThread, int batchSize) throws Exception {
     int totalDocs = 0;
     JSONArray batch = new JSONArray();
 
     Random rand = rands.get();
     Timer.Context constructBatchTimerCtxt = null;
-    for (int d = 0; d < numDocsPerLoop; d++) {
+    for (int d = 0; d < numDocsPerThread; d++) {
 
       if (constructBatchTimerCtxt == null) {
-        constructBatchTimerCtxt = constructBatch.time();
+        constructBatchTimerCtxt = constructDocsTimer.time();
       }
 
       String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
@@ -376,39 +396,120 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return doc;
   }
 
-  protected int indexSolrDocument(String idPrefix, String threadId, int numDocsPerLoop, int batchSize) throws Exception {
-    log.info(String.format("Starting indexing sampler test with: threadId=%s, batchSize=%d, numDocsPerLoop=%d",
-            threadId, batchSize, numDocsPerLoop));
+  // This class sends batches to Solr while the outer (main thread) generates documents
+  class SendToSolrThread extends Thread {
 
-    int totalDocs = 0;
-    List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
-    
-    Random rand = rands.get();
-    Timer.Context constructBatchTimerCtxt = null;    
-    for (int d = 0; d < numDocsPerLoop; d++) {
-      
-      if (constructBatchTimerCtxt == null) {
-        constructBatchTimerCtxt = constructBatch.time();
-      }
-      
-      String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
-      batch.add(buildSolrInputDocument(docId, rand));
+    IndexingSampler sampler;
+    int batchSize;
+    BlockingQueue<SolrInputDocument> queue;
+    int sent = 0;
 
-      if (batch.size() >= batchSize) {
-        constructBatchTimerCtxt.stop();
-        constructBatchTimerCtxt = null; // reset
-        
-        totalDocs += sendBatch(batch, 10, 3);
-        if (totalDocs % 1000 == 0) {
-          log.info("Thread " + threadId + " has sent " + totalDocs
-              + " docs so far.");
+    SendToSolrThread(String threadId, IndexingSampler sampler, BlockingQueue<SolrInputDocument> queue, int batchSize) {
+      super("SentToSolrThread-"+threadId);
+      this.setPriority(Thread.MAX_PRIORITY);
+      this.queue = queue;
+      this.sampler = sampler;
+      this.batchSize = batchSize;
+    }
+
+    public int sent() {
+      return sent;
+    }
+
+    @Override
+    public void run() {
+      log.info(getName()+" is running.");
+      List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
+      SolrInputDocument doc = null;
+      try {
+        doc = queue.poll();
+        while (doc != null) {
+          batch.add(doc);
+
+          if (batch.size() >= batchSize)
+            sent += sampler.sendBatch(batch, 10, 3);
+
+          doc = queue.poll();
+          if (doc == null) {
+            // safety measure to allow more docs to come-in
+            Thread.sleep(500);
+            doc = queue.poll();
+          }
+        }
+
+        // last batch
+        if (batch.size() > 0)
+          sent += sendBatch(batch, 10, 3);
+
+      } catch (Exception e) {
+        if (e instanceof RuntimeException) {
+          throw (RuntimeException)e;
+        } else {
+          throw new RuntimeException(e);
         }
       }
     }
 
-    // last batch
-    if (batch.size() > 0) {
-      totalDocs += sendBatch(batch, 10, 3);
+    public void blockUntilFinished() {
+      while (!queue.isEmpty()) {
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          Thread.interrupted();
+          break;
+        }
+      }
+    }
+  }
+
+  protected int indexSolrDocument(String idPrefix, String threadId, int numDocsToSend, int queueSize, int batchSize) throws Exception {
+    log.info(String.format("Starting indexing sampler test with: threadId=%s, batchSize=%d, numDocsToSend=%d, queueSize=%d",
+            threadId, batchSize, numDocsToSend, queueSize));
+
+    // safe-guard to ensure the Send thread doesn't block forever waiting for more docs ...
+    if (queueSize > numDocsToSend)
+      queueSize = numDocsToSend;
+
+    // at about 90% full, we'll put the create threads to sleep
+    int highWaterMark = Math.round(queueSize*0.65f);
+    int lowWaterMark = Math.min(Math.round(queueSize*0.2f),batchSize*3);
+    int nBatches = batchSize*8;
+
+    // start constructing and queuing up docs, but don't start sending until the queue has some docs buffered up
+    BlockingQueue<SolrInputDocument> queue = new LinkedBlockingQueue<SolrInputDocument>(queueSize);
+    SendToSolrThread sendThread = null;
+    int totalDocs = 0;
+    Random rand = rands.get();
+    for (int d = 0; d < numDocsToSend; d++) {
+      String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
+      queue.offer(buildSolrInputDocument(docId, rand));
+
+      if (++totalDocs % nBatches == 0) {
+        log.info("Thread " + threadId + " has queued " + totalDocs +
+                " docs and sent "+(sendThread != null ? sendThread.sent() : 0)+
+                "; queue.size="+queue.size());
+      }
+
+      if (queue.size() > highWaterMark) {
+        if (sendThread != null) {
+          // queue is pretty full ... let this thread sleep a little to allow the sender to get caught up
+          while (queue.size() > lowWaterMark) {
+            try {
+              Thread.sleep(500);
+            } catch (InterruptedException ie) {}
+          }
+        } else {
+          // queue is almost full, start sending documents
+          sendThread = new SendToSolrThread(threadId, this, queue, batchSize);
+          sendThread.start();
+        }
+      }
+    }
+
+    if (sendThread != null) {
+      log.info("Constructed "+numDocsToSend+" docs; waiting for queue to empty, current size is: "+queue.size());
+      sendThread.blockUntilFinished();
+      log.info("Queue drained ... thread "+threadId+" is done sending "+totalDocs+" docs");
     }
 
     return totalDocs;
@@ -454,7 +555,14 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     int sent = 0;
     final Timer.Context sendTimerCtxt = sendBatchToSolrTimer.time();
     try {
-      cloudSolrServer.add(batch);
+      UpdateRequest updateRequest = new UpdateRequest();
+      ModifiableSolrParams params = updateRequest.getParams();
+      if (params == null) {
+        params = new ModifiableSolrParams();
+        updateRequest.setParams(params);
+      }
+      updateRequest.add(batch);
+      cloudSolrServer.request(updateRequest);
       sent = batch.size();
     } catch (Exception exc) {
 

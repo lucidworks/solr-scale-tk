@@ -17,8 +17,8 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <stringProp name="LoopController.loops">1</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">5</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">3</stringProp>
+        <stringProp name="ThreadGroup.num_threads">4</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
@@ -31,22 +31,22 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="ZK_HOST" elementType="Argument">
                 <stringProp name="Argument.name">ZK_HOST</stringProp>
-                <stringProp name="Argument.value">localhost:2181</stringProp>
+                <stringProp name="Argument.value">localhost:2181/local410</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">timsFusionColl2</stringProp>
+                <stringProp name="Argument.value">foo5</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
                 <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">100</stringProp>
+                <stringProp name="Argument.value">500</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
                 <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">100000</stringProp>
+                <stringProp name="Argument.value">500000</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="THREAD_ID" elementType="Argument">
@@ -56,7 +56,7 @@
               </elementProp>
               <elementProp name="ID_PREFIX" elementType="Argument">
                 <stringProp name="Argument.name">ID_PREFIX</stringProp>
-                <stringProp name="Argument.value">jm5</stringProp>
+                <stringProp name="Argument.value">id27</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
@@ -76,12 +76,17 @@
               </elementProp>
               <elementProp name="FUSION_INDEX_PIPELINE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_INDEX_PIPELINE</stringProp>
-                <stringProp name="Argument.value">http://localhost:8765/lucid/api/v1/index-pipelines/conn_solr/collections/${collection}/index</stringProp>
+                <stringProp name="Argument.value">http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="ENDPOINT_TYPE" elementType="Argument">
                 <stringProp name="Argument.name">ENDPOINT_TYPE</stringProp>
-                <stringProp name="Argument.value">fusion</stringProp>
+                <stringProp name="Argument.value">solrcloud</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+              <elementProp name="QUEUE_SIZE" elementType="Argument">
+                <stringProp name="Argument.name">QUEUE_SIZE</stringProp>
+                <stringProp name="Argument.value">15000</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>
@@ -95,7 +100,32 @@
       <ResultCollector guiclass="TableVisualizer" testclass="ResultCollector" testname="View Results in Table" enabled="true">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
-          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>false</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>false</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+          </value>
+        </objProp>
+        <objProp>
           <value class="SampleSaveConfiguration">
             <time>true</time>
             <latency>true</latency>
@@ -127,7 +157,32 @@
       <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
-          <name>saveConfig</name>
+          <value class="SampleSaveConfiguration">
+            <time>true</time>
+            <latency>true</latency>
+            <timestamp>true</timestamp>
+            <success>true</success>
+            <label>true</label>
+            <code>true</code>
+            <message>true</message>
+            <threadName>true</threadName>
+            <dataType>true</dataType>
+            <encoding>false</encoding>
+            <assertions>true</assertions>
+            <subresults>true</subresults>
+            <responseData>false</responseData>
+            <samplerData>false</samplerData>
+            <xml>false</xml>
+            <fieldNames>false</fieldNames>
+            <responseHeaders>false</responseHeaders>
+            <requestHeaders>false</requestHeaders>
+            <responseDataOnError>false</responseDataOnError>
+            <saveAssertionResultsFailureMessage>false</saveAssertionResultsFailureMessage>
+            <assertionsResultsToSave>0</assertionsResultsToSave>
+            <bytes>true</bytes>
+          </value>
+        </objProp>
+        <objProp>
           <value class="SampleSaveConfiguration">
             <time>true</time>
             <latency>true</latency>
