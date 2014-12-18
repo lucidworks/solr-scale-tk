@@ -95,13 +95,15 @@ You can also override any of the global settings defined in fabfile.py using ~/.
 }
 ```
 
+setup_local
+-------------
 Alternatively, you can use the setup_local task to write the local cluster configuration for you. For instance:
 
 ```
 fab setup_local:myFusion,~/dev/lucidworks,fusionVers=1.1.2
 ```
 
-This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them in ~/dev/lucidworks. Specifically, you'll end up having:
+This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them to a local path provided as a task parameter (~/dev/lucidworks). Specifically, you'll end up having:
 
 ```
 ~/dev/lucidworks/solr-4.10.2
