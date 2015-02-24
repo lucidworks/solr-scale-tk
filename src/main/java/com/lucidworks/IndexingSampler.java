@@ -19,7 +19,7 @@ import org.apache.jmeter.protocol.java.sampler.AbstractJavaSamplerClient;
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
-import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
@@ -51,7 +51,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   private static List<String> englishWords = null;
 
   protected Logger log;
-  protected CloudSolrServer cloudSolrServer;
+  protected CloudSolrClient cloudSolrServer;
   //protected Random rand;
   protected FieldSpec[] fields;
   protected boolean commitAtEnd = true;
@@ -189,7 +189,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         throw new IllegalArgumentException("ZK_HOST is required when using ENDPOINT_TYPE="+type);
 
       getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
-      cloudSolrServer = new CloudSolrServer(zkHost);
+      cloudSolrServer = new CloudSolrClient(zkHost);
       cloudSolrServer.setDefaultCollection(collection);
       cloudSolrServer.connect();
       getLogger().info("Connected to SolrCloud; collection=" + collection);
@@ -268,7 +268,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         cloudSolrServer.shutdown();
       } catch (Exception ignore) {}
       cloudSolrServer = null;
-      log.info("Shutdown CloudSolrServer.");
+      log.info("Shutdown CloudSolrClient.");
     }
 
     super.teardownTest(context);

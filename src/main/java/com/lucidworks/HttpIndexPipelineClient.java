@@ -7,7 +7,7 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
-import org.apache.solr.client.solrj.impl.HttpClientUtil;
+import org.apache.solr.client.solrj.impl.HttpSolrClient;
 import org.json.simple.JSONArray;
 
 import java.io.BufferedReader;
@@ -25,9 +25,8 @@ public class HttpIndexPipelineClient {
   Random random;
 
   public HttpIndexPipelineClient(String endpointUrl) throws MalformedURLException {
-    httpClient = HttpClientUtil.createClient(null);
-    HttpClientUtil.setMaxConnections(httpClient, 500);
-    HttpClientUtil.setMaxConnectionsPerHost(httpClient, 100);
+    HttpSolrClient solrClient = new HttpSolrClient(endpointUrl);
+    httpClient = solrClient.getHttpClient();
     endPoints = new ArrayList<String>(Arrays.asList(endpointUrl.split(",")));
     random = new Random();
     numEndpoints = endPoints.size();

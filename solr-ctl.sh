@@ -40,7 +40,7 @@ source $SCRIPT_DIR/solr-ctl-env.sh
 if [ "$MODE" == "zk-init" ]; then
   ZK_DIR=$2
   if [ ! -d $ZK_DIR ]; then
-    ZK_DIR=/home/ec2-user/zookeeper-3.4.5
+    ZK_DIR=/home/ec2-user/zookeeper-3.4.6
   fi 
   $ZK_DIR/bin/zkServer.sh stop || true
   echo "removing zookeeper data from $ZK_DIR/data/*"

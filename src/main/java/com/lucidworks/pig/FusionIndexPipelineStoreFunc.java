@@ -186,7 +186,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
       } catch (Exception ignore) {
       }
 
-      // re-try the task with new SolrServer
+      // re-try the task with new SolrClient
       future = executor.submit(task);
       try {
         Object result = future.get(timeoutSecs, TimeUnit.SECONDS);

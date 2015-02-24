@@ -7,9 +7,9 @@ import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.log.Logger;
 import org.apache.solr.client.solrj.SolrQuery;
-import org.apache.solr.client.solrj.SolrServer;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrServerException;
-import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.TermsResponse;
 
@@ -31,7 +31,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     private static final com.codahale.metrics.Counter excCounter = metrics.counter("exceptions");
 
     private static ConsoleReporter reporter = null;
-    private static CloudSolrServer cloudSolrServer = null;
+    private static CloudSolrClient cloudSolrServer = null;
     private static Map<String,List<String>> termsDict = null;
 
     protected Logger log;
@@ -226,7 +226,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
                 String zkHost = params.get("ZK_HOST");
                 getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
                 String collection = params.get("COLLECTION");
-                cloudSolrServer = new CloudSolrServer(zkHost);
+                cloudSolrServer = new CloudSolrClient(zkHost);
                 cloudSolrServer.setDefaultCollection(collection);
                 cloudSolrServer.connect();
                 getLogger().info("Connected to SolrCloud; collection=" + collection);
@@ -248,7 +248,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
         }
     }
 
-    protected Map<String,List<String>> buildTermsDictionary(SolrServer solr) throws Exception {
+    protected Map<String,List<String>> buildTermsDictionary(SolrClient solr) throws Exception {
         Map<String,List<String>> terms = new HashMap<String,List<String>>();
         SolrQuery termsQ = new SolrQuery();
         termsQ.setParam("qt", "/terms");
@@ -281,7 +281,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
                     cloudSolrServer.shutdown();
                 } catch (Exception ignore) {}
                 cloudSolrServer = null;
-                log.info("Shutdown CloudSolrServer.");
+                log.info("Shutdown CloudSolrClient.");
             }
         }
 

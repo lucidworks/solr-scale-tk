@@ -24,7 +24,7 @@ CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
 AWS_PV_AMI_ID = 'ami-806bc8e8'
-AWS_HVM_AMI_ID = 'ami-0664c76e'
+AWS_HVM_AMI_ID = 'ami-3ab2e052'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -43,7 +43,7 @@ _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
 _config['solr_java_home'] = '${user_home}/jdk1.7.0_67'
-_config['solr_tip'] = '${user_home}/solr-4.10.0'
+_config['solr_tip'] = '${user_home}/solr-5.0.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -424,8 +424,7 @@ GC_TUNE="-XX:NewRatio=3 \
 -XX:CMSInitiatingOccupancyFraction=50 \
 -XX:CMSMaxAbortablePrecleanTime=6000 \
 -XX:+CMSParallelRemarkEnabled \
--XX:+ParallelRefProcEnabled \
--XX:-UseBiasedLocking"
+-XX:+ParallelRefProcEnabled"
 
 # Set the ZooKeeper connection string if using an external ZooKeeper ensemble
 # e.g. host1:2181,host2:2181/chroot
@@ -433,7 +432,7 @@ GC_TUNE="-XX:NewRatio=3 \
 ZK_HOST="%s"
 
 # Set the ZooKeeper client timeout (for SolrCloud mode)
-#ZK_CLIENT_TIMEOUT="15000"
+ZK_CLIENT_TIMEOUT="15000"
 
 # By default the start script uses "localhost"; override the hostname here
 # for production SolrCloud environments to control the hostname exposed to cluster state
@@ -656,7 +655,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
     _status('Determining Solr Java memory options for running %s Solr nodes on a %s' % (numNodesPerHost, instance_type))
     
     if instance_type is None or numNodesPerHost <= 0: # garbage in, just use default
-        return '-Xms512m -Xmx512m -XX:MaxPermSize=512m -XX:PermSize=256m'
+        return '-Xms512m -Xmx512m'
 
     showWarn = False
     if instance_type == 'm1.small':
@@ -739,7 +738,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
     if showWarn:
         _warn('%d nodes on an %s is probably too many! Consider using a larger instance type.' % (numNodesPerHost, instance_type))    
         
-    return '-Xms%s -Xmx%s -XX:MaxPermSize=512m -XX:PermSize=256m' % (mx, mx)
+    return '-Xms%s -Xmx%s' % (mx, mx)
         
 def _uptime(launch_time):
     launchTime = dateutil.parser.parse(launch_time)
@@ -1304,7 +1303,7 @@ export SOLR_JAVA_MEM="%s"
             _fab_append(solrInShPath, solrInSh)
 
     # upload config to ZK
-    with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
+    with settings(host_string=hosts[0]): #, hide('output', 'running', 'warnings'):
         to_run = 'mkdir -p '+cloudDir+'/tmp; rm -rf '+cloudDir+'/tmp/*; mkdir -p '+cloudDir+'/tmp/cloud; cp -r '+remoteSolrDir+'/cloud84/solr/cloud/* '+cloudDir+'/tmp/cloud/'
         run(to_run)
         remoteUpconfigCmd = '%s upconfig cloud' % sstkScript

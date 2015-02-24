@@ -37,7 +37,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.conn.ConnectTimeoutException;
 import org.apache.log4j.Logger;
 import org.apache.solr.client.solrj.SolrQuery;
-import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.HttpSolrServer;
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.request.DirectXmlRequest;
@@ -65,7 +65,7 @@ public class SolrCloudTools {
   public interface Tool {
     Option[] getOptions();
 
-    void runTool(CloudSolrServer solr, CommandLine cli) throws Exception;
+    void runTool(CloudSolrClient solr, CommandLine cli) throws Exception;
   }
 
   public static Logger log = Logger.getLogger(SolrCloudTools.class);
@@ -136,9 +136,9 @@ public class SolrCloudTools {
     String zkHost = cli.getOptionValue("zkHost", ZK_HOST);
 
     log.info("Connecting to Solr cluster: " + zkHost);
-    CloudSolrServer cloudSolrServer = null;
+    CloudSolrClient cloudSolrServer = null;
     try {
-      cloudSolrServer = new CloudSolrServer(zkHost);
+      cloudSolrServer = new CloudSolrClient(zkHost);
       cloudSolrServer.setDefaultCollection(collection);
       cloudSolrServer.connect();
       
@@ -355,7 +355,7 @@ public class SolrCloudTools {
   }
     
   /**
-   * Use CloudSolrServer direct updates to send synthetic documents to SolrCloud. 
+   * Use CloudSolrClient direct updates to send synthetic documents to SolrCloud.
    */
   static class IndexerTool implements Tool {
 
@@ -398,7 +398,7 @@ public class SolrCloudTools {
     }
     
     @Override
-    public void runTool(CloudSolrServer cloudSolrServer, CommandLine cli) throws Exception {
+    public void runTool(CloudSolrClient cloudSolrServer, CommandLine cli) throws Exception {
       HealthcheckTool healthcheck = new HealthcheckTool();
       
       int numDocs = Integer.parseInt(cli.getOptionValue("numDocsToIndex", "10000"));
@@ -435,7 +435,7 @@ public class SolrCloudTools {
       healthcheck.runTool(cloudSolrServer, cli);
     }    
     
-    protected int sendBatch(CloudSolrServer cloudSolrServer, 
+    protected int sendBatch(CloudSolrClient cloudSolrServer,
                             List<SolrInputDocument> batch, 
                             int waitBeforeRetry, 
                             int maxRetries) 
@@ -506,7 +506,7 @@ public class SolrCloudTools {
     }
 
     @Override
-    public void runTool(CloudSolrServer cloudSolrServer, CommandLine cli) throws Exception {
+    public void runTool(CloudSolrClient cloudSolrServer, CommandLine cli) throws Exception {
       log.info("Gathering health information from Solr cluster ...");
       
       //Map<String,AtomicInteger> collectionsPerHost = new TreeMap<String,AtomicInteger>();
@@ -611,7 +611,7 @@ public class SolrCloudTools {
   static class BackupTool implements Tool {
 
     @Override
-    public void runTool(CloudSolrServer cloudSolrServer, CommandLine cli)
+    public void runTool(CloudSolrClient cloudSolrServer, CommandLine cli)
         throws Exception {
 
       // establish the date
@@ -848,7 +848,7 @@ public class SolrCloudTools {
   }
 
   private static final Map<String, String> getShardLeaders(
-      CloudSolrServer solr, String collection) throws Exception {
+      CloudSolrClient solr, String collection) throws Exception {
     Map<String, String> leaders = new TreeMap<String, String>();
     ZkStateReader zkStateReader = solr.getZkStateReader();
     for (Slice slice : zkStateReader.getClusterState().getSlices(collection)) {
