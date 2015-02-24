@@ -23,7 +23,7 @@ import shutil
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_PV_AMI_ID = 'ami-806bc8e8'
+AWS_PV_AMI_ID = 'ami-a8b4e6c0'
 AWS_HVM_AMI_ID = 'ami-3ab2e052'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
@@ -1799,12 +1799,12 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
 def setup_demo(cluster):
     hosts = _lookup_hosts(cluster)
     numHosts = len(hosts)
-    setup_meta_node(cluster)
+    # setup_meta_node(cluster)
     numZkHosts = 3 if numHosts >= 3 else 1
     zkHosts = _zk_ensemble(cluster, hosts[0:numZkHosts])
     _info('Successfully launched new ZooKeeper ensemble: ' + str(zkHosts))
     _info('\nzkHost=%s/%s\n' % (str(','.join(zkHosts)), cluster))
-    hosts = setup_solrcloud(cluster=cluster, zk=cluster, meta=cluster, nodesPerHost=2)
+    hosts = setup_solrcloud(cluster=cluster, zk=cluster, nodesPerHost=2)
     solrUrl = 'http://%s:8984/solr/#/' % str(hosts[0])
     _info('Successfully launched new SolrCloud cluster ' + cluster + '; visit: ' + solrUrl)
     new_collection(cluster=cluster, name='demo', shards=numHosts, rf=2)
