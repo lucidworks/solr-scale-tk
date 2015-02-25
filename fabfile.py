@@ -1261,17 +1261,20 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
         cloud84Dir = os.path.expanduser(remoteSolrDir+'/cloud84')
         if os.path.isdir(cloud84Dir) is False:
             # make the cloud84 dir from example
-            exampleDir = os.path.expanduser(remoteSolrDir+'/example')
-            if os.path.isdir(exampleDir) is False:
-                _fatal(str(exampleDir)+' not found! Cannot create the cloud84 directory.')
-            _copy_dir(exampleDir, cloud84Dir)
-            os.rename(cloud84Dir+'/solr/collection1', cloud84Dir+'/solr/cloud')
-            os.remove(cloud84Dir+'/solr/cloud/core.properties')
-            shutil.rmtree(cloud84Dir+'/solr/cloud/data', True)
-            shutil.rmtree(cloud84Dir+'/example-schemaless')
-            shutil.rmtree(cloud84Dir+'/exampledocs')
-            shutil.rmtree(cloud84Dir+'/example-DIH')
-            shutil.rmtree(cloud84Dir+'/multicore')
+            serverDir = os.path.expanduser(remoteSolrDir+'/server')
+            if os.path.isdir(serverDir) is False:
+                _fatal(str(serverDir)+' not found! Cannot create the cloud84 directory.')
+            _copy_dir(serverDir, cloud84Dir)
+
+            _copy_dir(cloud84Dir+'/solr/configsets/data_driven_schema_configs', cloud84Dir+'/solr/cloud')
+
+            #os.rename(cloud84Dir+'/solr/collection1', cloud84Dir+'/solr/cloud')
+            #os.remove(cloud84Dir+'/solr/cloud/core.properties')
+            #shutil.rmtree(cloud84Dir+'/solr/cloud/data', True)
+            #shutil.rmtree(cloud84Dir+'/example-schemaless')
+            #shutil.rmtree(cloud84Dir+'/exampledocs')
+            #shutil.rmtree(cloud84Dir+'/example-DIH')
+            #shutil.rmtree(cloud84Dir+'/multicore')
 
     # make sure the solr-scale-tk shell scripts are up-to-date on the remote servers
     exportCloudEnv = ('''#!/bin/bash
