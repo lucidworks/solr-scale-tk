@@ -1,4 +1,5 @@
-REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-1.2.0-SNAPSHOT-rc2-0.jar';
+-- REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-1.2.0-SNAPSHOT-rc2-0.jar';
+REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-2.0.1-0-0-hadoop2.jar';
 
 set solr.zkhost '$zkHost';
 set solr.collection '$collection';
@@ -14,9 +15,11 @@ SET mapred.max.tracker.failures 20;
 SET mapred.map.max.attempts 20;
 
 -- s3://solr-scale-tk/pig/s3_to_solr.pig
--- s3://solr-scale-tk/pig/output/syn_sample_5m
+-- s3://solr-scale-tk/pig/output/syn130m/
+-- s3://solr-scale-tk/pig/output/syn_sample_10m
+-- s3://thelabdude/syn_sample_10m
 -- s3://solr-scale-tk/pig/output/foo/
--- -p RED=12 -p collection=tim1x2_n7 -p batch=250 -p zkHost=ec2-107-21-162-234.compute-1.amazonaws.com:2181/rep
+-- -p RED=12 -p collection=perf6x2 -p batch=500 -p zkHost=ec2-107-20-120-112.compute-1.amazonaws.com:2181,ec2-54-87-32-31.compute-1.amazonaws.com:2181,ec2-54-87-53-77.compute-1.amazonaws.com:2181/rpf
 
 data = load '$INPUT' using PigStorage() as (id: chararray,
   integer1_i: int,

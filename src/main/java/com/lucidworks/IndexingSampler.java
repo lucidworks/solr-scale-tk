@@ -330,7 +330,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     }
 
     inDoc.setField("indexed_at_tdt", new Date());
-    inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
+    //inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
 
     return inDoc;
   }
@@ -561,7 +561,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         params = new ModifiableSolrParams();
         updateRequest.setParams(params);
       }
-      updateRequest.add(batch);
+
+      if (batch.size() == 1) {
+        updateRequest.add(batch.get(0));
+      } else {
+        updateRequest.add(batch);
+      }
+
       cloudSolrServer.request(updateRequest);
       sent = batch.size();
     } catch (Exception exc) {
