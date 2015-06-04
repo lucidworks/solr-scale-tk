@@ -400,6 +400,8 @@ public class SolrCloudTools {
     @Override
     public void runTool(CloudSolrClient cloudSolrServer, CommandLine cli) throws Exception {
       HealthcheckTool healthcheck = new HealthcheckTool();
+
+      IndexingSampler docGenerator = new IndexingSampler();
       
       int numDocs = Integer.parseInt(cli.getOptionValue("numDocsToIndex", "10000"));
       int indexOffset = Integer.parseInt(cli.getOptionValue("indexOffset", "0"));
@@ -408,7 +410,7 @@ public class SolrCloudTools {
       List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
       for (int d = 0; d < numDocs; d++) {
         String docId = String.valueOf(d + indexOffset);
-        SolrInputDocument inDoc = buildSolrInputDocument(docId);
+        SolrInputDocument inDoc = docGenerator.buildSolrInputDocument(docId, random); // buildSolrInputDocument(docId);
         batch.add(inDoc);
 
         if (batch.size() >= batchSize) {

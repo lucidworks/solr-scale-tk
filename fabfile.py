@@ -63,7 +63,7 @@ _config['fusion_home'] = '${user_home}/fusion'
 
 instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2,
                         'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
-                        'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1 }
+                        'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2 }
 
 class _HeadRequest(urllib2.Request):
     def get_method(self):
@@ -714,7 +714,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '512m'
-    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large':
+    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large' or instance_type == 'c3.2xlarge':
         if numNodesPerHost == 1:
             mx = '7g'
         elif numNodesPerHost == 2:
@@ -2371,12 +2371,12 @@ def get_file(cluster,remote,n=0,local='./'):
     with settings(host_string=hosts[idx]):
         get(remote,str(localDir))
     
-def index_docs(cluster,collection,numDocs=20000,batchSize=100):
+def index_docs(cluster,collection,numDocs=20000,batchSize=100,indexOffset=0):
     """
     Index synthetic documents into a collection; mostly only useful for demos.
     """
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
-    local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d -batchSize=%d' % (collection, zkHost, int(numDocs), int(batchSize)))
+    local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d -batchSize=%d -indexOffset=%d' % (collection, zkHost, int(numDocs), int(batchSize), int(indexOffset)))
 
 def restart_solr(cluster,wait=0,pauseBeforeRestart=0):
     """

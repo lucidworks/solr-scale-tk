@@ -122,7 +122,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
                 noResultsCounter.inc();
 
             result.setResponseOK();
-        } catch (SolrServerException solrExc) {
+        } catch (Exception solrExc) {
             excCounter.inc();
         } finally {
             queryTimerCtxt.stop();
