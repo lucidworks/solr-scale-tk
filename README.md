@@ -133,11 +133,10 @@ fab demo:demo1,n=1
 ```
 The demo command performs the following tasks in order:
 1. Provisions one m3.medium instance in EC2
-2. Sets up the meta node (SiLK, RabbitMQ, etc)
-3. Configures one ZooKeeper server
-4. Launches two Solr nodes in cloud mode (ports 8984 and 8985)
-5. Creates a new collection named "demo" in SolrCloud; 1 shards, replication factor of 2
-6. Indexes 10,000 synthetic documents in the demo collection
+2. Configures one ZooKeeper server
+3. Launches two Solr nodes in cloud mode (ports 8984 and 8985)
+4. Creates a new collection named "demo" in SolrCloud; 1 shards, replication factor of 2
+5. Indexes 10,000 synthetic documents in the demo collection
 
 After verifying this works for you, take a moment to navigate to the Solr admin console and issue some queries against the collection. You can also go to the Solr admin console for the Solr instance that Logstash4Solr is using to index log messages from your SolrCloud nodes. After experimenting with the demo cluster, terminate the EC2 instance by doing: 
 ```
@@ -195,18 +194,6 @@ To see more information about a specific command, do:
 ```
 fab -d <command>
 ```
-Meta Node
-
-You have the option of deploying a "meta" node to support testing. The meta node is intended to run shared services, such as log aggregation with Logstash4Solr. When you spin-up a new SolrCloud cluster using the new_solrcloud command, you have the option of specifying a meta node name. If supplied, then the Solr instances will be configured to integrate their log files with the meta node. Let's see an example of this in action to make sure it is clear:
-
-```
-fab new_meta_node:metta_world_peace
-fab new_solrcloud:mycloud,n=3,meta=metta_world_peace
-```
-
-Running these commands will result in 4 instances being launched: 3 for SolrCloud and 1 meta node. The Solr nodes will send WARN and more severe log messages to Logstash4Solr on the meta node. You can find log messages by going to the Solr Query form for the Solr instance that logstash4solr is using, see URL in the console output for the new_meta_node command.
-
-NOTE: The meta node is a work-in-progress, so please let us know if you have suggestions about other useful shared services we can deploy on the meta node.
 
 Patching
 

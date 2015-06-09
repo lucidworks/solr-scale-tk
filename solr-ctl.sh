@@ -75,6 +75,13 @@ cd $SOLR_TOP/cloud$SOLR_PORT
 
 if [ "$MODE" == "setup" ]; then
 
+  if [ "$SOLR_PORT" == "84" ]; then
+    # if the cloud84 directory does not exist, clone the server directory
+    if [ ! -d "$SOLR_TOP/cloud84" ]; then
+      cp -r $SOLR_TOP/server $SOLR_TOP/cloud84
+    fi
+  fi
+
   VOL_INDEX=$3
   if [ "$VOL_INDEX" == "" ]; then
     echo "ERROR: Must specify instance store volume index!"

@@ -1,5 +1,5 @@
 from fabric.api import *
-from fabric.exceptions import NetworkError
+from fabric.exceptions import NetworkError as _NetworkError
 from fabric.colors import green as _green, blue as _blue, red as _red, yellow as _yellow
 from fabric.contrib.files import append as _fab_append, exists as _fab_exists
 from fabric.contrib.console import confirm
@@ -7,10 +7,10 @@ from StringIO import StringIO as _strio
 import boto
 from boto.s3.key import Key as _S3Key
 import boto.emr
-from boto.emr.step import InstallPigStep
-from boto.emr.step import PigStep
-from random import shuffle
-from urllib import urlretrieve
+from boto.emr.step import InstallPigStep as _InstallPigStep
+from boto.emr.step import PigStep as _PigStep
+from random import shuffle as _shuffle
+from urllib import urlretrieve as _urlretrieve
 import boto.ec2
 import time
 import sys
@@ -27,8 +27,8 @@ import shutil
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_PV_AMI_ID = 'ami-a8b4e6c0'
-AWS_HVM_AMI_ID = 'ami-3ab2e052'
+AWS_PV_AMI_ID = 'ami-8d52b9e6'
+AWS_HVM_AMI_ID = 'ami-e951ba82'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -46,8 +46,8 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.7.0_67'
-_config['solr_tip'] = '${user_home}/solr-5.0.0'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_45'
+_config['solr_tip'] = '${user_home}/solr-5.2.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -61,7 +61,7 @@ _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion'
 
-instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2,
+instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2,
                         'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
                         'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2 }
 
@@ -173,6 +173,17 @@ def _get_ec2_provider(region):
     else:
         return boto.connect_ec2()
 
+class _LocalProvider:
+    """Local provider (instead of EC2)"""
+    def type(self):
+        return 'local'
+
+    def get_all_instances(self,filters=None):
+        return []
+
+    def close(self):
+        return
+
 # Get a handle to a Cloud Provider API (or mock for local mode)
 def _provider_api():
     sstk_cfg = _get_config()
@@ -186,6 +197,8 @@ def _provider_api():
         if sstk_cfg.has_key('region'):
             region = sstk_cfg['region']
         return _get_ec2_provider(region)
+    elif provider == 'local':
+        return _LocalProvider()
     else:
         _fatal(provider+' not supported! Please correct your ~/.sstk configuration file.')
         return None
@@ -285,7 +298,7 @@ def _ssh_to_new_instance(host):
         try:
             run('whoami')
             sshOk = True
-        except NetworkError as e:
+        except _NetworkError as e:
             print e
             sskOk = False
         except:
@@ -363,6 +376,8 @@ def _gen_zoo_cfg(zkDataDir, zkHosts):
     zoo_cfg += 'syncLimit=5\n'
     zoo_cfg += 'dataDir='+zkDataDir+'\n'
     zoo_cfg += 'clientPort=2181\n'
+    zoo_cfg += 'autopurge.snapRetainCount=3\n'
+    zoo_cfg += 'autopurge.purgeInterval=1\n'
     numHosts = len(zkHosts)
     if numHosts > 1:
         for z in range(0, numHosts):
@@ -372,13 +387,7 @@ def _gen_zoo_cfg(zkDataDir, zkHosts):
 
 # some silly stuff going on here ...
 def _gen_log4j_cfg(localId=None, rabbitMqHost=None, mqLevel='WARN'):
-    cfg = ''
-
-    if rabbitMqHost is None:
-        cfg += 'log4j.rootLogger=INFO, file'
-    else:
-        cfg += 'log4j.rootLogger=INFO, file, rabbitmq'
-
+    cfg = 'log4j.rootLogger=INFO, file'
     cfg += '''
 log4j.appender.file=org.apache.log4j.RollingFileAppender
 log4j.appender.file.MaxFileSize=200MB
@@ -389,23 +398,6 @@ log4j.appender.file.layout.ConversionPattern=%d{ISO8601} [%t] %-5p %c{3} %x - %m
 log4j.logger.org.apache.zookeeper=WARN
 log4j.logger.org.apache.http=WARN
 log4j.logger.org.apache.solr.update.processor.LogUpdateProcessor=WARN
-'''
-
-    if rabbitMqHost is not None:
-        cfg += '''
-log4j.appender.rabbitmq=com.plant42.log4j.appenders.RabbitMQAppender
-log4j.appender.rabbitmq.threshold=''' + mqLevel + '''
-log4j.appender.rabbitmq.identifier=''' + localId + '''
-log4j.appender.rabbitmq.host=''' + rabbitMqHost + '''
-log4j.appender.rabbitmq.port=5672
-log4j.appender.rabbitmq.username=guest
-log4j.appender.rabbitmq.password=guest
-log4j.appender.rabbitmq.virtualHost=/
-log4j.appender.rabbitmq.exchange=log4j-exchange
-log4j.appender.rabbitmq.type=direct
-log4j.appender.rabbitmq.durable=false
-log4j.appender.rabbitmq.queue=log4j-queue
-log4j.appender.rabbitmq.layout=com.plant42.log4j.layouts.JSONLayout
 '''
     return cfg
 
@@ -419,6 +411,10 @@ def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost):
 
     solrInSh = ('''#!/bin/bash
 SOLR_JAVA_HOME="%s"
+if [ -z "$JAVA_HOME" ]; then
+  export JAVA_HOME=$SOLR_JAVA_HOME
+  export PATH=$SOLR_JAVA_HOME/bin:$PATH
+fi
 
 # Increase Java Min/Max Heap as needed to support your indexing / query needs
 SOLR_JAVA_MEM="%s"
@@ -559,6 +555,10 @@ def _zk_ensemble(cluster, hosts):
         zkHosts.append(hosts[z] + ':2181')
 
     zkDir = _env(cluster, 'zk_home')
+
+    java_home = _env(cluster, 'solr_java_home')
+    set_java_home = ('JAVA_HOME='+java_home+' ')
+
     remoteZooCfg = zkDir + '/conf/zoo.cfg'
 
     zkDataDir = _env(cluster,'zk_data_dir')
@@ -574,15 +574,13 @@ def _zk_ensemble(cluster, hosts):
     for z in range(0, n):
         with settings(host_string=hosts[z]), hide('output', 'running', 'warnings'):
             # stop zk
-            run(zkDir + '/bin/zkServer.sh stop')
+            run(set_java_home + zkDir + '/bin/zkServer.sh stop')
 
             # setup to clean snapshots
             if provider == 'local':
                 local('mkdir -p '+zkDataDir+' || true')
                 local('rm -rf '+zkDataDir+'/*')
             else:
-                put('zk_cron.sh', zkDir)
-                run('chmod +x %s/zk_cron.sh && echo "0 * * * *  %s/zk_cron.sh" > %s/crondump && crontab < %s/crondump' % (zkDir, zkDir, zkDir, zkDir))
                 sudo('mkdir -p '+zkDataDir+' || true')
                 sudo('rm -rf '+zkDataDir+'/*')
                 sudo('chown -R '+sshUser+': '+zkDataDir)
@@ -595,7 +593,7 @@ def _zk_ensemble(cluster, hosts):
     # restart after stopping and clearing data
     for z in range(0, n):
         with settings(host_string=hosts[z]), hide('output', 'running', 'warnings'):
-            run(zkDir + '/bin/zkServer.sh start')
+            run(set_java_home + zkDir + '/bin/zkServer.sh start')
 
     _info('Started ZooKeeper on %d nodes ... checking status' % n)
     time.sleep(5)
@@ -692,7 +690,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '128m'
-    elif instance_type == 'm3.medium':
+    elif instance_type == 'm3.medium' or instance_type == 't2.medium':
         if numNodesPerHost == 1:
             mx = '1g'
         elif numNodesPerHost == 2:
@@ -763,8 +761,12 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         
     if showWarn:
         _warn('%d nodes on an %s is probably too many! Consider using a larger instance type.' % (numNodesPerHost, instance_type))    
-        
-    return '-Xms%s -Xmx%s' % (mx, mx)
+
+    mem_settings = ('-Xms%s -Xmx%s' % (mx, mx))
+
+    _info('Using Java heap settings: '+mem_settings)
+
+    return mem_settings
         
 def _uptime(launch_time):
     launchTime = dateutil.parser.parse(launch_time)
@@ -866,7 +868,7 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
 
     # randomize the list of nodes to restart
     # helps avoid restarting all nodes on the same host around the same time
-    shuffle(nodesToRestart)
+    _shuffle(nodesToRestart)
 
     _status('Doing a rolling restart of %d nodes (which can take a while so be patient) ...' % len(nodesToRestart))
 
@@ -907,42 +909,6 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
     is_solr_up(cluster)
     _info('Rolling restart completed.')
 
-def _configure_banana(metaHost):
-    # Setup the correct hostname for the banana UI
-    bananaWebapp = user_home + '/slk-4.7.0/solr-4.7.0/SiLK/banana-webapp/webapp'
-    bananaDefaultJson = bananaWebapp + '/app/dashboards/default.json'
-    put('banana_monitoring_db.json', bananaDefaultJson)
-    solrHost = '''"solr": {
-    "server": "http://''' +metaHost+ ''':8983/solr/",
-    "core_name": "logstash_logs"
-  }
-}'''
-    _fab_append(bananaDefaultJson, solrHost)
-        
-    solrConfigJs = '''define(['settings'],
-function (Settings) {
-  "use strict";
-  return new Settings({
-    elasticsearch: "http://localhost:9200",
-    solr: "http://'''+metaHost+''':8983/solr/",
-    solr_core: "logstash_logs",
-    kibana_index: "kibana-int",
-    panel_names: [
-      'histogram',
-      'table',
-      'timepicker',
-      'text',
-      'column',
-      'query',
-      'terms'
-    ]
-  });
-});
-'''
-    bananaConfigJs = bananaWebapp + '/config.js'
-    run('rm '+bananaConfigJs)
-    _fab_append(bananaConfigJs, solrConfigJs)
-    
 def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
     numStores = int(numInstStores)
     if numStores <= 0:
@@ -967,6 +933,7 @@ def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
                 # grant ownership to our ssh user
                 sudo('chown -R %s: /vol%d' % (ssh_user, v))
 
+# TODO: collectd stuff is still useful, but meta node is replaced by Fusion
 def _integ_host_with_meta(cluster, host, metaHost):
     # setup logging on the Solr server based on whether there is a meta host
     # running rabbitmq and the logstash4solr stuff   
@@ -1127,6 +1094,8 @@ def new_ec2_instances(cluster,
 
     _status('Going to launch %d new EC2 %s instances using AMI %s' % (num, instance_type, ami))
 
+    username = getpass.getuser()
+
     # verify no cluster with the same ID already exists with running instances
     existing = _find_instances_in_cluster(ec2, cluster, True)
     if len(existing) > 0:
@@ -1196,7 +1165,6 @@ def new_ec2_instances(cluster,
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
     # add a tag to each instance so that we can filter many instances by our cluster tag
-    username = getpass.getuser()
 
     for inst in rsrv.instances:
         try:
@@ -1242,9 +1210,11 @@ def new_ec2_instances(cluster,
     sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username }
     _save_config()
 
+    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
+
     return hosts
 
-def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
+def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1):
     """
     Configures and starts a SolrCloud cluster on machines identified by the cluster parameter.
     SolrCloud is configured to connect to an existing ZooKeeper ensemble or boostrap a single
@@ -1284,10 +1254,15 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
     else:
         zkHosts = _get_zk_hosts(cloud, zk)
 
+    if len(zkHosts) == 0:
+        _fatal('No ZooKeeper hosts found!')
+
     zkHost = ','.join(zkHosts)
 
     # chroot the znodes for this cluster
     zkHost += ('/' + cluster)
+
+    _info('ZooKeeper connection string for cluster: '+zkHost)
 
     instance_type = _get_instance_type(cloud, cluster)
     solrJavaMemOpts = _get_solr_java_memory_opts(instance_type, numNodesPerHost)
@@ -1295,34 +1270,12 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, meta=None):
     remoteSolrDir = _env(cluster, 'solr_tip')
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
 
-    # setup local if needed
-    provider = _env(cluster, 'provider')
-    if provider == "local":
-        cloudDir = os.path.expanduser(_env(cluster, 'sstk_cloud_dir'))
-        if os.path.isdir(cloudDir) is False:
-            os.makedirs(cloudDir)
-
-        cloud84Dir = os.path.expanduser(remoteSolrDir+'/cloud84')
-        if os.path.isdir(cloud84Dir) is False:
-            # make the cloud84 dir from example
-            serverDir = os.path.expanduser(remoteSolrDir+'/server')
-            if os.path.isdir(serverDir) is False:
-                _fatal(str(serverDir)+' not found! Cannot create the cloud84 directory.')
-            _copy_dir(serverDir, cloud84Dir)
-
-            _copy_dir(cloud84Dir+'/solr/configsets/data_driven_schema_configs', cloud84Dir+'/solr/cloud')
-
-            #os.rename(cloud84Dir+'/solr/collection1', cloud84Dir+'/solr/cloud')
-            #os.remove(cloud84Dir+'/solr/cloud/core.properties')
-            #shutil.rmtree(cloud84Dir+'/solr/cloud/data', True)
-            #shutil.rmtree(cloud84Dir+'/example-schemaless')
-            #shutil.rmtree(cloud84Dir+'/exampledocs')
-            #shutil.rmtree(cloud84Dir+'/example-DIH')
-            #shutil.rmtree(cloud84Dir+'/multicore')
-
     # make sure the solr-scale-tk shell scripts are up-to-date on the remote servers
     exportCloudEnv = ('''#!/bin/bash
 export SOLR_JAVA_HOME="%s"
+if [ -z "$JAVA_HOME" ]; then
+  export JAVA_HOME=$SOLR_JAVA_HOME
+fi
 export SOLR_TOP="%s"
 export ZK_HOST="%s"
 export CLOUD_SCRIPTS_DIR="$SOLR_TOP/cloud84/scripts/cloud-scripts"
@@ -1339,8 +1292,14 @@ export SOLR_JAVA_MEM="%s"
     sstkScript = _env(cluster, 'SSTK')
     binSolrScript = remoteSolrDir + '/bin/solr'
     cloudDir = _env(cluster, 'sstk_cloud_dir')
+
+    # bootstrap zk
+    with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+        run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
+
     for host in hosts:
-        with settings(host_string=host), hide('output', 'running', 'warnings'):
+        with settings(host_string=host), hide('output', 'running'):
+            run('mkdir -p '+cloudDir+' || true')
             run('rm -f ' + sstkEnvScript)
             _fab_append(sstkEnvScript, exportCloudEnv)
             run('chmod +x ' + sstkEnvScript)
@@ -1349,20 +1308,7 @@ export SOLR_JAVA_MEM="%s"
             run('rm -f '+solrInShPath)
             _fab_append(solrInShPath, solrInSh)
 
-    # upload config to ZK
-    with settings(host_string=hosts[0]): #, hide('output', 'running', 'warnings'):
-        to_run = 'mkdir -p '+cloudDir+'/tmp; rm -rf '+cloudDir+'/tmp/*; mkdir -p '+cloudDir+'/tmp/cloud; cp -r '+remoteSolrDir+'/cloud84/solr/cloud/* '+cloudDir+'/tmp/cloud/'
-        run(to_run)
-        remoteUpconfigCmd = '%s upconfig cloud' % sstkScript
-        run(remoteUpconfigCmd)
-
-    # support option to enable logstash4solr integration and zabbix agent
     metaHost = None
-    if meta is not None:        
-        metaHost = _lookup_hosts(meta, True)[0]
-        _status('Found metaHost: '+metaHost)
-    else:
-        _status('No meta node specified.')
 
     # setup N Solr nodes per host using the script to do the actual starting
     numStores = instanceStoresByType[instance_type]
@@ -1372,7 +1318,7 @@ export SOLR_JAVA_MEM="%s"
     solrHostAndPorts = []
     for host in hosts:
         with settings(host_string=host), hide('output', 'running', 'warnings'):
-            _integ_host_with_meta(cluster, host, metaHost)
+            #_integ_host_with_meta(cluster, host, metaHost)
 
             for p in range(0, numNodesPerHost):
                 solrPort = str(84 + p)
@@ -1392,8 +1338,10 @@ export SOLR_JAVA_MEM="%s"
                 remoteStartCmd = '%s start -cloud -p %s -d %s' % (binSolrScript, solrPort, solrDir)
                 _status('Running start on '+host+': ' + remoteStartCmd)
                 run(remoteSolrDir+'/bin/solr stop -p '+solrPort+' || true')
-                run('nohup ' + remoteStartCmd + ' &', pty=False)
+                startScriptOutput = remoteSolrDir+'/cloud84/logs/solr-startup.out'
+                _runbg(remoteStartCmd, startScriptOutput)
                 time.sleep(2)
+                _info('Started Solr on port '+solrPort+' on '+host+'; check '+startScriptOutput+' if Solr is not running.')
 
     # wait until the Solr servers report they are up
     _status('Solr instances launched ... waiting up to %d seconds to see %d Solr servers come online.' % (180, totalNodes))
@@ -1416,7 +1364,7 @@ def is_solr_up(cluster):
     _wait_to_see_solr_up_on_hosts(solrHostAndPorts, 5)
 
 # create a collection
-def new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
+def new_collection(cluster, name, rf=1, shards=1, conf='data_driven_schema_configs', existingConfName=None):
     """
     Create a new collection in the specified cluster.
 
@@ -1432,24 +1380,15 @@ def new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     Returns:
       collection stats
     """
-
     hosts = _lookup_hosts(cluster)
     numNodes = _num_solr_nodes_per_host(cluster)
-    nodes = len(hosts) * numNodes
-    replicas = int(rf) * int(shards)
-    maxShardsPerNode = int(max(1, round(replicas / nodes)))
-    _info('%d cores across %d nodes requires maxShardsPerNode=%d' % (replicas, nodes, maxShardsPerNode))
-
-    createAction = ('http://%s:8984/solr/admin/collections?action=CREATE&name=%s&replicationFactor=%s&numShards=%s&collection.configName=%s&maxShardsPerNode=%s' %
-         (hosts[0], name, str(rf), str(shards), conf, str(maxShardsPerNode)))
-
-    _info('Create new collection named %s using:\n%s' % (name, createAction))
-    try:
-        response = urllib2.urlopen(createAction)
-        solr_resp = response.read()
-        _info('Create collection succeeded\n' + solr_resp)
-    except urllib2.HTTPError as e:
-        _error('Create new collection named %s failed due to: %s' % (name, str(e)) + '\n' + e.read())
+    remoteSolrDir = _env(cluster, 'solr_tip')
+    with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
+        confParam = '-d '+conf
+        if existingConfName is not None:
+            confParam = '-n '+existingConfName
+        run(remoteSolrDir+'/bin/solr create -c %s -rf %s -shards %s %s' % (name, str(rf), str(shards), confParam))
+    cluster_status(cluster,name)
 
 def delete_collection(cluster, name):
     """
@@ -1459,11 +1398,8 @@ def delete_collection(cluster, name):
       cluster: Identifies the SolrCloud cluster you want to delete the collection from.
       name: Name of the collection to delete.
     """
-
     hosts = _lookup_hosts(cluster, False)
-
     deleteAction = 'http://%s:8984/solr/admin/collections?action=DELETE&name=%s' % (hosts[0], name)
-
     _info('Delete the collection named %s using:\n%s' % (name, deleteAction))
     try:
         response = urllib2.urlopen(deleteAction)
@@ -1472,37 +1408,30 @@ def delete_collection(cluster, name):
     except urllib2.HTTPError as e:
         _error('Delete collection named %s failed due to: %s' % (name, str(e)) + '\n' + e.read())
 
-# Uncomment this when CLUSTERSTATUS action is available: Solr 4.8+
-#
-# def cluster_status(cluster, collection=None, shard=None):
-#     """
-#     Retrieve status for the specified cluster.
-#
-#     Arg Usage:
-#       cluster: Identifies the SolrCloud cluster you want to get status for.
-#       collection (optional): restricts status info to this collection.
-#       shard (optional, comma-separated list): restricts status info to this shard/set of shards.
-#     """
-#
-#     hosts = _lookup_hosts(cluster, False)
-#
-#     params = ''
-#     if collection is not None or shard is not None:
-#         params = '?'
-#         if collection is not None:
-#             params += collection
-#             if shard is not None: params += '&'
-#         if shard is not None: params += shard
-#
-#     listAction = 'http://%s:8984/solr/admin/collections?action=CLUSTERSTATUS%s' % (hosts[0], params)
-#
-#     _info('Retrieving cluster status using:\n%s' % listAction)
-#     try:
-#         response = urllib2.urlopen(listAction)
-#         solr_resp = response.read()
-#         _info('Cluster status retrieval succeeded\n' + solr_resp)
-#     except urllib2.HTTPError as e:
-#         _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
+def cluster_status(cluster, collection=None, shard=None):
+    """
+    Retrieve status for the specified cluster.
+    Arg Usage:
+      cluster: Identifies the SolrCloud cluster you want to get status for.
+      collection (optional): restricts status info to this collection.
+      shard (optional, comma-separated list): restricts status info to this shard/set of shards.
+    """
+    hosts = _lookup_hosts(cluster, False)
+    params = ''
+    if collection is not None or shard is not None:
+        params = '?'
+        if collection is not None:
+            params += collection
+            if shard is not None: params += '&'
+        if shard is not None: params += shard
+    listAction = 'http://%s:8984/solr/admin/collections?action=CLUSTERSTATUS%s' % (hosts[0], params)
+    _info('Retrieving cluster status using:\n%s' % listAction)
+    try:
+        response = urllib2.urlopen(listAction)
+        solr_resp = response.read()
+        _info(solr_resp)
+    except urllib2.HTTPError as e:
+         _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
 
 def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=None, placement_group=None):
     """
@@ -1528,9 +1457,6 @@ def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=None, placement_
     _info(paramReport)
 
     hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, az=az, placement_group=placement_group)
-
-    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
-
     zkHosts = _zk_ensemble(cluster, hosts)
     _info('Successfully launched new ZooKeeper ensemble')
 
@@ -1564,7 +1490,7 @@ def kill(cluster):
     _save_config()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, instance_type=None, ami=None, az=None, placement_group=None):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
@@ -1592,19 +1518,15 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, meta=None, insta
         ami: %s
         az: %s
         placement_group: %s
-        meta: %s
     *****
-    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami, az, placement_group, meta)
+    ''' % (cluster, zkHost, instance_type, int(n), int(nodesPerHost), ami, az, placement_group)
     _info(paramReport)
     
     if confirm('Verify the parameters. OK to proceed?') is False:
         return
 
     ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group)
-
-    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(ec2hosts))
-
-    hosts = setup_solrcloud(cluster=cluster, zk=zk, zkn=zkn, meta=meta, nodesPerHost=nodesPerHost)
+    hosts = setup_solrcloud(cluster=cluster, zk=zk, zkn=zkn, nodesPerHost=nodesPerHost)
     solrUrl = 'http://%s:8984/solr/#/' % str(hosts[0])
     _info('Successfully launched new SolrCloud cluster ' + cluster + '; visit: ' + solrUrl)
 
@@ -1692,9 +1614,10 @@ def mine(user=None):
         if clusters.has_key(cluster) is False:
             clusters[cluster] = []
 
-        upTime = _uptime(inst.launch_time)
-        clusters[cluster].append('%s: %s (%s %s%s)' % 
-          (inst.public_dns_name, key, inst.instance_type, inst.state, upTime))
+        if inst.launch_time:
+            upTime = _uptime(inst.launch_time)
+            clusters[cluster].append('%s: %s (%s %s%s)' %
+              (inst.public_dns_name, key, inst.instance_type, inst.state, upTime))
 
         clusterList.append(cluster)
 
@@ -1770,70 +1693,6 @@ def kill_mine():
 
     cloud.close()
 
-def setup_meta_node(cluster):
-    """
-    Setup a meta node with supporting services, such as: Logstash4Solr, Rabbitmq, Zabbix
-    TODO: support kafka instead of rabbitmq
-    """
-    hosts = _lookup_hosts(cluster, False)
-    metaHost = hosts[0]
-    _status('Setting up the meta node on ' + metaHost)
-    with settings(host_string=metaHost), hide('output', 'running', 'warnings'):
-        # start rabbitmq service on meta node
-        sudo('service rabbitmq-server restart')
-
-        # create the exchanges / queues
-        run('rabbitmqadmin -V / declare exchange name=log4j-exchange type=direct durable=false')
-        run('rabbitmqadmin -V / declare queue name=log4j-queue durable=false')
-        
-        _status('Started RabbitMQ service ...')
-
-        # configure banana
-        _status('Configuring logstash4solr and banana dashboard ...')
-        _configure_banana(metaHost)
-        
-        # setup the data directory on /vol0 for the logstash_logs core
-        # /home/ec2-user/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs
-        run('rm -rf /vol0/logstash_logs_data; mkdir -p /vol0/logstash_logs_data')
-        coreProps = '''config=solrconfig.xml
-name=logstash_logs
-schema=schema.xml
-shard=
-dataDir=/vol0/logstash_logs_data
-collection=        
-'''
-        run('rm -f '+user_home+'/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs/core.properties')
-        _fab_append(user_home+'/slk-4.7.0/solr-4.7.0/SiLK/solr/logstash_logs/core.properties', coreProps)        
-
-        # start solr for logstash
-        startLogstashSolrServer = user_home + '/slk-4.7.0/solr-4.7.0/SiLK/silk-ctl.sh start'
-        
-        run('nohup ' + startLogstashSolrServer + ' >& /dev/null < /dev/null &', pty=False)
-        _status('Waiting to see logstash4solr server come online ...')
-        _wait_to_see_solr_up_on_hosts([metaHost + ':8983'])
-
-        _status('Started Solr for logstash4solr')
-
-        # start logstash4solr on meta node
-        logstash4solr = user_home + '/slk-4.7.0/solrWriterForLogStash/logstash_deploy/logstash4solr-ctl.sh'
-        run('nohup ' + logstash4solr + ' >& /dev/null < /dev/null &', pty=False)        
-        _status('Started logstash4solr process')
-        
-        # do this again to reset the dashboard correctly
-        _configure_banana(metaHost)        
-
-    print('RabbitMQ Admin UI @ ' + _blue('http://%s:15672/' % metaHost))
-    print('Logstash4Solr Solr Console @ ' + _blue('http://%s:8983/solr/#/' % metaHost))
-    print('Banana UI @ ' + _blue('http://%s:8983/banana' % metaHost))
-
-def new_meta_node(meta, instance_type='m3.large', ami=None, az=None, placement_group=None):
-    """
-    Launches a new meta node on an m3.large instance.
-    """
-    ec2hosts = new_ec2_instances(cluster=meta, n=1, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group)
-    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(ec2hosts))
-    setup_meta_node(meta)
-
 def demo(demoCluster, n=3, instance_type='m3.medium'):
     """
     Demo of all this script's capabilities in one command.
@@ -1841,8 +1700,6 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
     """
     ec2hosts = new_ec2_instances(cluster=demoCluster, n=n, instance_type=instance_type)
     numHosts = len(ec2hosts)
-    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % numHosts)
-
     # print them out to the console if it is a small number
     if numHosts < 10:
         for h in ec2hosts:
@@ -1853,7 +1710,6 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
 def setup_demo(cluster):
     hosts = _lookup_hosts(cluster)
     numHosts = len(hosts)
-    # setup_meta_node(cluster)
     numZkHosts = 3 if numHosts >= 3 else 1
     zkHosts = _zk_ensemble(cluster, hosts[0:numZkHosts])
     _info('Successfully launched new ZooKeeper ensemble: ' + str(zkHosts))
@@ -2188,7 +2044,10 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
         
     # collect the replica information for each shard for the collection we're restoring data into
     shardDirs = {}
-    with settings(host_string=hosts[0]), hide('output','running'):
+
+    java_home = _env(cluster, 'solr_java_home')
+
+    with shell_env(JAVA_HOME=java_home), settings(host_string=hosts[0]), hide('output','running'):
         run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % remoteSolrDir)
         get('/tmp/clusterstate.json', './clusterstate.json')    
         # parse the clusterstate.json to get the shard leader node assignments
@@ -2528,26 +2387,6 @@ def jmeter(solrCluster,jmxfile,jmeterCluster=None,collection=None,propertyfile=N
                 run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -n -t %s -j %s' % (collection, zkHostStr, jmeterDir, jmxFileName, jmeterTestLogFile))
         get(jmeterTestLogDir, '.')
 
-def attach_to_meta_node(cluster,meta):    
-    """
-    Configures existing SolrCloud nodes to attach to an existing meta node. This command
-    is useful if you add a meta node after starting a SolrCloud cluster.
-    """
-    cloud = _provider_api()
-    metaHost = _cluster_hosts(cloud, meta)[0]
-    if metaHost is None:
-        _fatal('Meta node '+meta+' not found!')
-
-    print 'metaHost='+metaHost
-
-    hosts = _cluster_hosts(cloud, cluster)
-    for host in hosts:
-        with settings(host_string=host): #, hide('output', 'running', 'warnings'):
-            _integ_host_with_meta(cluster, host, metaHost)
-    # restart each Solr node, waiting to see them come back up
-    _rolling_restart_solr(cloud, cluster, None, 0, None, 0)
-    cloud.close()
-    
 def restart_node(cluster,port,n=0):
     """
     Restart a specific Solr node by specifying the cluster, port and node index.
@@ -2729,17 +2568,77 @@ def fusion_start(cluster,api=1,ui=1,connectors=1):
     # create the fusion.in.sh include file
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     # sstk starts Solr on 8984, so we need to change the connectors port
-    fusionInSh = '# Auto-generated var override generated by sstk\n'
-    fusionInSh += 'CONNECTORS_PORT=8763\n'
-    fusionInSh += 'CONNECTORS_STOP_PORT=7763\n'
-    fusionInSh += 'FUSION_ZK='+zkHost+'\n'
-    fusionInSh += 'FUSION_SOLR_ZK='+zkHost+'\n'
+    fusionConfigSh = ('''
+# Auto-generated config created by solr-scale-tk
+API_PORT=8765
+API_STOP_PORT=7765
+API_STOP_KEY=fusion
+API_JAVA_OPTIONS=(-Xmx512m -Xss256k -XX:MaxPermSize=256m -Dapple.awt.UIElement=true)
+
+CONNECTORS_PORT=8763
+CONNECTORS_STOP_PORT=7763
+CONNECTORS_STOP_KEY=fusion
+CONNECTORS_JAVA_OPTIONS=(-Xmx2g -Xss256k -XX:MaxPermSize=256m -Dapple.awt.UIElement=true)
+
+SOLR_PORT=8984
+SOLR_STOP_PORT=7984
+SOLR_STOP_KEY=fusion
+SOLR_JAVA_OPTIONS=(-Xmx2g -Xss256k -Dapple.awt.UIElement=true)
+
+UI_PORT=8764
+UI_STOP_PORT=7764
+UI_STOP_KEY=fusion
+UI_JAVA_OPTIONS=(-Xmx512m -XX:MaxPermSize=256m -Dapple.awt.UIElement=true)
+
+SPARK_MASTER_PORT=8766
+SPARK_MASTER_UI_PORT=8767
+SPARK_MASTER_JAVA_OPTIONS=(-Xmx512m -XX:MaxPermSize=128m -Dapple.awt.UIElement=true)
+
+SPARK_JOB_SERVER_PORT=8768
+
+SPARK_WORKER_PORT=8769
+SPARK_WORKER_UI_PORT=8770
+SPARK_WORKER_JAVA_OPTIONS=(-Xmx2g -XX:MaxPermSize=256m -Dapple.awt.UIElement=true)
+
+# The FUSION_ZK is the address of the ZooKeeper cluster where Fusion keeps
+# track of its various services and stores its own configuration.
+# The FUSION_SOLR_ZK is used to locate the Solr cluster where Fusion
+# creates its internal collections (logs, metrics etc), and to change
+# solr configuration if expliticly asked via our APIs.
+FUSION_ZK=%s
+FUSION_SOLR_ZK=%s
+
+# Enable verbose GC logging
+GC_LOG_OPTS=(-verbose:gc \
+	-XX:+PrintHeapAtGC \
+	-XX:+PrintGCDetails \
+	-XX:+PrintGCDateStamps \
+	-XX:+PrintGCTimeStamps \
+	-XX:+PrintTenuringDistribution \
+	-XX:+PrintGCApplicationStoppedTime)
+
+# These GC settings have shown to work well for a number of common Solr workloads
+GC_TUNE=(-XX:NewRatio=3 \
+	-XX:SurvivorRatio=4 \
+	-XX:TargetSurvivorRatio=90 \
+	-XX:MaxTenuringThreshold=8 \
+	-XX:+UseConcMarkSweepGC \
+	-XX:+UseParNewGC \
+	-XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 \
+	-XX:+CMSScavengeBeforeRemark \
+	-XX:PretenureSizeThreshold=64m \
+	-XX:+UseCMSInitiatingOccupancyOnly \
+	-XX:CMSInitiatingOccupancyFraction=50 \
+	-XX:CMSMaxAbortablePrecleanTime=6000 \
+	-XX:+CMSParallelRemarkEnabled \
+	-XX:+ParallelRefProcEnabled)
+''' % (zkHost, zkHost))
+
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            put('common.sh', fusionBin+'/common.sh')
-            run('rm -f '+fusionBin+'/fusion.in.sh')
-            _status('Uploading fusion.in.sh includes file to '+host)
-            _fab_append(fusionBin+'/fusion.in.sh', fusionInSh)
+            run('mv '+fusionBin+'/config.sh '+fusionBin+'/config.sh.bak')
+            _status('Uploading config.sh includes file to '+host)
+            _fab_append(fusionBin+'/config.sh', fusionConfigSh)
 
     # start fusion, ui, connectors
     numFusionNodes = int(api)
@@ -2757,7 +2656,8 @@ def fusion_start(cluster,api=1,ui=1,connectors=1):
         for host in hosts[0:numFusionNodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/api stop || true')
-                run('nohup '+fusionBin+'/api restart > '+fusionHome+'/logs/api/run.out 2>&1 &', pty=False)
+                _runbg(fusionBin+'/api restart', fusionHome+'/logs/api/restart.out')
+                #run('nohup '+fusionBin+'/api restart > '+fusionHome+'/logs/api/run.out 2>&1 &', pty=False)
                 time.sleep(2)
                 _info('Started Fusion API service on '+host)
 
@@ -2824,7 +2724,7 @@ def fusion_status(cluster):
             run(fusionHome+'/bin/fusion status')
     cluster_status(cluster)
 
-def fusion_setup(cluster,vers='1.1.4'):
+def fusion_setup(cluster,vers='1.4.0'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
@@ -2852,7 +2752,7 @@ def fusion_setup(cluster,vers='1.1.4'):
 
     _info('\n\nFusion installed on %d hosts' % len(hosts))
 
-def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.1.4'):
+def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.4.0'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
@@ -2891,7 +2791,7 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
         zookeeperLocalTgz = localTip+'/'+zookeeperTgz
         if os.path.isfile(zookeeperLocalTgz) is False:
             _status('Downloading ZooKeeper '+zkVers)
-            urlretrieve(zookeeperDownloadUrl, zookeeperLocalTgz)
+            _urlretrieve(zookeeperDownloadUrl, zookeeperLocalTgz)
         _status('Download complete ... extracting '+zookeeperTgz)
         local('tar zxf %s -C %s' % (zookeeperLocalTgz, localTip))
 
@@ -2902,7 +2802,7 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
         solrLocalTgz = localTip+'/'+solrTgz
         if os.path.isfile(solrLocalTgz) is False:
             _status('Downloading Solr '+solrVers)
-            urlretrieve(solrDownloadUrl, solrLocalTgz)
+            _urlretrieve(solrDownloadUrl, solrLocalTgz)
         _status('Download complete ... extracting '+solrTgz)
         local('tar zxf %s -C %s' % (solrLocalTgz, localTip))
 
@@ -2915,7 +2815,7 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
             fusionLocalTgz = localTip+'/'+fusionTgz
             if os.path.isfile(fusionLocalTgz) is False:
                 _status('Downloading Fusion '+fusionVers)
-                urlretrieve(fusionDownloadUrl, fusionLocalTgz)
+                _urlretrieve(fusionDownloadUrl, fusionLocalTgz)
             _status('Extracting '+fusionTgz)
             local('tar zxf %s -C %s' % (fusionLocalTgz, localTip))
 
@@ -2948,14 +2848,14 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
         fusion_start(cluster)
 
-def new_emr_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=360):
+def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=360):
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
     availability_zone = _env(cluster, 'AWS_AZ')
     keyname = _env(cluster, 'AWS_KEY_NAME')
 
-    pigStep = InstallPigStep()
+    pigStep = _InstallPigStep()
     steps = [pigStep]
 
     emr = boto.emr.connect_to_region(region)
@@ -3006,7 +2906,7 @@ def new_emr_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
     _save_config()
 
 
-def run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-east-1'):
+def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-east-1'):
 
     # lookup the job flow ID of the cluster
     sstk_cfg = _get_config()
@@ -3025,12 +2925,12 @@ def run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_samp
     pigArgs = ['-p','INPUT='+input,
                '-p','RED='+str(numReducers),
                '-p','OUTPUT='+output]
-    pigStep = PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
+    pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
 
     emr.add_jobflow_steps(job_flow_id, [pigStep])
 
 
-def run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_10m', batch_size='1500', reducers='12', region='us-east-1'):
+def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_10m', batch_size='1500', reducers='12', region='us-east-1'):
 
     # lookup the job flow ID of the cluster
     sstk_cfg = _get_config()
@@ -3055,6 +2955,6 @@ def run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', 
                '-p','batch='+str(batchSize),
                '-p','zkHost='+zkHost]
 
-    pigStep = PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
+    pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
 
     emr.add_jobflow_steps(job_flow_id, [pigStep])
