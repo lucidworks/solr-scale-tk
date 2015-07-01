@@ -400,6 +400,7 @@ public class SolrCloudTools {
     @Override
     public void runTool(CloudSolrServer cloudSolrServer, CommandLine cli) throws Exception {
       HealthcheckTool healthcheck = new HealthcheckTool();
+      IndexingSampler samp = new IndexingSampler();
       
       int numDocs = Integer.parseInt(cli.getOptionValue("numDocsToIndex", "10000"));
       int indexOffset = Integer.parseInt(cli.getOptionValue("indexOffset", "0"));
@@ -408,7 +409,7 @@ public class SolrCloudTools {
       List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
       for (int d = 0; d < numDocs; d++) {
         String docId = String.valueOf(d + indexOffset);
-        SolrInputDocument inDoc = buildSolrInputDocument(docId);
+        SolrInputDocument inDoc = samp.buildSolrInputDocument(docId, random);
         batch.add(inDoc);
 
         if (batch.size() >= batchSize) {
@@ -419,7 +420,8 @@ public class SolrCloudTools {
           if (d % commitEvery == 0) {
             log.info("Sent " + d + " docs so far ... committing and then checking cloud state ...");
             cloudSolrServer.commit(true, true);
-            healthcheck.runTool(cloudSolrServer, cli);
+            log.info("commit returned");
+            //healthcheck.runTool(cloudSolrServer, cli);
           }
         }
       }
@@ -432,7 +434,7 @@ public class SolrCloudTools {
       log.info("Sent " + numDocs + " docs ... committing ...");
       cloudSolrServer.commit(true, true);
       log.info("Committed.");      
-      healthcheck.runTool(cloudSolrServer, cli);
+      //healthcheck.runTool(cloudSolrServer, cli);
     }    
     
     protected int sendBatch(CloudSolrServer cloudSolrServer, 
@@ -442,10 +444,15 @@ public class SolrCloudTools {
         throws Exception
     {
       int sent = 0;
+
+      log.info("Sending batch of "+batch.size()+" docs...");
+
       try {
         cloudSolrServer.add(batch);
         sent = batch.size();
       } catch (Exception exc) {
+
+        exc.printStackTrace();
         
         Throwable rootCause = SolrException.getRootCause(exc);
         boolean wasCommError =

@@ -406,7 +406,7 @@ SOLR_JAVA_MEM="%s"
 
 # Enable verbose GC logging
 GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails \
--XX:+PrintGCDateStamps -XX:+PrintGCTimeStamps -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime"
+-XX:+PrintGCDateStamps -XX:+PrintGCCause -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime"
 
 # These GC settings have shown to work well for a number of common Solr workloads
 GC_TUNE="-XX:NewRatio=3 \
@@ -719,7 +719,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
             mx = '3g'
     elif instance_type == 'r3.2xlarge':
         mx = '12g'
-    elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
+    elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge' or instance_type == 'i2.8xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
         else:
@@ -1120,8 +1120,8 @@ def new_ec2_instances(cluster,
         _fatal('Must specify the number of instance stores for instance instance_type: ' % instance_type)
     
     numStores = int(numInstanceStores)
-    if numStores > 4:
-        _fatal('Too many instance stores requested! Please specify an int between 0-4.')
+    #if numStores > 4:
+    #    _fatal('Too many instance stores requested! Please specify an int between 0-4.')
         
     # warn the user that they are configuring instances without any additional instance storage configured
     # TODO: need to build up a dict containing instance type metadata
@@ -1130,11 +1130,11 @@ def new_ec2_instances(cluster,
             _fatal('numInstanceStores=0 setting not confirmed!')
 
     # TODO: this is hacktastic! Need a mapping from /dev/sd# to /dev/xvd#
-    devs = ['sdb','sdc','sdd','sde']
+    devs = ['sdb','sdc','sdd','sde','sdf','sdg','sdh','sdi']
     xdevs = ['xvdf','xvdg','xvdh','xvdi']
     
     if ami == hvmAmiId:
-        xdevs = ['xvdb','xvdc','xvdd','xvde']
+        xdevs = ['xvdb','xvdc','xvdd','xvde','xvdf','xvdg','xvdh','xvdi']
 
     bdm = None   
     if setupInstanceStores is True and numStores > 0:
@@ -2895,4 +2895,175 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
         fusion_start(cluster)
 
+def _runbg( command, out_file="/dev/null", err_file=None, shell=True, pty=False ):
+    run('nohup %s >%s 2>%s </dev/null &' % (command, out_file, err_file or '&1'), shell, pty)
+
+def setup_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    sleepSecs = 22
+
+    with settings(host_string=hosts[0]):
+        for host in hosts[1:len(hosts)]:
+            _info('copying files to: '+host)
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa supervisord tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa supervisord.conf tpotter@'+host+':')
+            run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa supervise_solr.sh tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa supervise_solr.sh tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa solr86.conf tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa solr85.conf tpotter@'+host+':')
+
+    for host in hosts[1:len(hosts)]:
+        with settings(host_string=host):
+            _info('\n\n'+host)
+            #sudo('easy_install supervisor; cp /home/tpotter/supervisord.conf /etc/; cp /home/tpotter/supervisord /etc/rc.d/init.d/supervisord; chmod +x /etc/rc.d/init.d/supervisord; chkconfig --add supervisord; chkconfig supervisord on; mkdir -p /etc/supervisord.d/; cp /home/tpotter/solr8*.conf /etc/supervisord.d/; cp /home/tpotter/supervise_solr.sh /var/solr/; chown solr: /var/solr/supervise_solr.sh; chmod +x /var/solr/supervise_solr.sh')
+            sudo('cp /home/tpotter/supervise_solr.sh /var/solr/; chmod +x /var/solr/supervise_solr.sh')
+            sudo('SOLR_INCLUDE=/var/solr/solr85.in.sh /opt/solr/bin/solr stop -p 8985 || true')
+            time.sleep(sleepSecs)
+            sudo('SOLR_INCLUDE=/var/solr/solr86.in.sh /opt/solr/bin/solr stop -p 8986 || true')
+            #sudo('service supervisord start; sleep 2; supervisorctl status')
+            time.sleep(sleepSecs)
+
+
+def supv_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+
+    with settings(host_string=hosts[0]):
+        #put('sg-log-indexer-0.1-exe.jar')
+        for host in hosts[1:len(hosts)]:
+            _info('copying files to: '+host)
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa jetty.xml tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa log4j.properties tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa solr.war tpotter@'+host+':')
+            #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa sg-log-indexer-0.1-exe.jar tpotter@'+host+':')
+            #sudo('cp /home/tpotter/sg-log-indexer-0.1-exe.jar /home/isaac/')
+            sudo('cp /home/tpotter/solr.war /opt/solr/server/webapps/; rm -rf /opt/solr/server/solr-webapp/webapp; cp /home/tpotter/jetty.xml /opt/solr/server/etc; cp /home/tpotter/log4j.properties /opt/solr/server/resources')
+
+    #for host in hosts[1:len(hosts)]:
+    #    _info('setting up supervisord on: '+host)
+    #    sudo('easy_install supervisor; echo_supervisord_conf > /etc/supervisord.conf;')
+
+        #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa kill_gc_tailer.sh tpotter@'+host+':')
+    #    run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa sg-log-indexer-0.1-exe.jar tpotter@'+host+':')
+
+        #for host in hosts[0:len(hosts)]:
+        #    with settings(host_string=host):
+        #        _info('\n\n'+host)
+        #_runbg('sh /home/tpotter/feb26.sh')
+        #time.sleep(10)
+        #       run('du -hs /var/solr/solr_home_8*/logs_feb26_h*/data/tlog/* || true')
+        #sudo('rm -f /home/tpotter/indexer*.out || true')
+        #put('feb26.sh', '/home/tpotter')
+        #run('chmod +x /home/tpotter/feb26.sh')
+        #put('run_feb26.sh', '/home/tpotter')
+        #run('rm -f /home/tpotter/*.out')
+        #run('sh /home/tpotter/run_feb26.sh', pty=False)
+        #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa index_logs.sh tpotter@'+host+':')
+        #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa sg-log-indexer-0.1-exe.jar tpotter@'+host+':')
+
+
+"""
+curl -u admin:S3ndGr1d15 -X POST -H 'Content-type: application/json' -d '{"id":"logs_jan31","solrParams":{"name":"logs_jan31"}' http://solr0002t1mdw1.sendgrid.net:8764/api/apollo/collections
+
+"""
+def cmd_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    for host in hosts[0:len(hosts)]:
+        with settings(host_string=host):
+            run('ps auxww | grep sg-log-indexer | grep -v grep || true')
+
+#            sudo('''rm /home/isaac/sg-log-indexer-0.1-exe.jar; for x in `ps auxww | grep sg-log-indexer | grep -v grep | awk '{print $2}' | sort -r | tr -d ' '`; do
+#                      kill -9 $x
+#                      echo killed $x
+#                    done''')
+
+#run('sh /home/tpotter/kill_gc_tailer.sh')
+#_runbg('sh /home/tpotter/tail_gc_logs.sh')
+
+def gc_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    for host in hosts[0:len(hosts)]:
+        with settings(host_string=host):
+            #sudo('cp /etc/init.d/solr /home/tpotter/solr_init; rm /etc/init.d/solr; rm /etc/init.d/solr2')
+            run('sh /home/tpotter/kill_gc_tailer.sh')
+            _runbg('sh /home/tpotter/tail_gc_logs.sh')
+
+
+def rolling_restart_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+
+    sleepSecs = 30
+
+    for host in hosts[13:14]: #len(hosts)]:
+        with settings(host_string=host):
+            _info('\n\n'+host)
+            #put('solr8*.in.sh','/home/tpotter')
+            #sudo('cp /home/tpotter/solr8*.in.sh /var/solr')
+            sudo('cp /home/tpotter/solr.war /opt/solr/server/webapps/; rm -rf /opt/solr/server/solr-webapp/webapp; cp /home/tpotter/jetty.xml /opt/solr/server/etc; cp /home/tpotter/log4j.properties /opt/solr/server/resources')
+            sudo('supervisorctl stop solr85')
+            sudo('SOLR_INCLUDE=/var/solr/solr85.in.sh /opt/solr/bin/solr stop -p 8985 || true')
+            run('find /var/solr/solr_home_85 -name tlog -exec du -hs {} \; | grep M || true')
+            #time.sleep(sleepSecs)
+            #sudo('supervisorctl start solr85')
+            time.sleep(sleepSecs)
+            sudo('supervisorctl stop solr86')
+            sudo('SOLR_INCLUDE=/var/solr/solr86.in.sh /opt/solr/bin/solr stop -p 8986 || true')
+            run('find /var/solr/solr_home_86 -name tlog -exec du -hs {} \; | grep M || true')
+            time.sleep(sleepSecs)
+            sudo('supervisorctl start solr86')
+            time.sleep(sleepSecs)
+
+'''
+    with settings(host_string=hosts[0]):
+        #put('solr8*.in.sh','/home/tpotter')
+        #sudo('cp /home/tpotter/solr8*.in.sh /var/solr')
+        sudo('SOLR_INCLUDE=/var/solr/solr85.in.sh /opt/solr/bin/solr stop -p 8985')
+        run('find /var/solr/solr_home_85 -name tlog -exec du -hs {} \; | grep M || true')
+        #time.sleep(sleepSecs)
+        #sudo('service solr restart')
+'''
+
+
+def harvest_gc_logs_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+
+    idx = 0
+    for host in hosts[0:len(hosts)]:
+        with settings(host_string=host):
+            idx = idx + 1
+            _info('\n\n'+host)
+            run('gzip -c /var/solr/solr_home_85/logs/solr_gc.log > /home/tpotter/solr_gc_85.gz; gzip -c /var/solr/solr_home_86/logs/solr_gc.log > /home/tpotter/solr_gc_86.gz')
+            get('solr_gc_85.gz', './solr_gc_logs/solr_gc_85_'+str(idx)+'.gz')
+            get('solr_gc_86.gz', './solr_gc_logs/solr_gc_86_'+str(idx)+'.gz')
+
+
+def cleanup_sg():
+    cluster = 'sendgrid'
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+
+    #with settings(host_string=hosts[0]):
+    #    for host in hosts[4:len(hosts)]:
+    #        _info('copying files to: '+host)
+    #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa jdk-7u75-linux-x64.rpm tpotter@'+host+':')
+    #run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa *.tgz tpotter@'+host+':')
+    #        run('scp -o StrictHostKeyChecking=no -i /home/tpotter/id_rsa install_solr.sh tpotter@'+host+':')
+
+
+    for host in hosts[0:len(hosts)]:
+        with settings(host_string=host):
+            _info('installing Solr on: '+host)
+            run('rm /home/tpotter/jdk-7u75-linux-x64.rpm || true')
+            run('rm /home/tpotter/*.tgz || true')
 

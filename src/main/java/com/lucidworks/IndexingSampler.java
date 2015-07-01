@@ -104,6 +104,21 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         new FieldSpec("text2_en", "s:20:100000:z:0", 30),      
         new FieldSpec("text3_en", "s:8:30000:z:0", 80)      
       };        
+
+      initializeWords("100K_words_en.txt");
+  }
+
+  protected synchronized void initializeWords(String wordListResource) {
+    if (englishWords == null) {
+      try {
+        englishWords = loadWords(wordListResource);
+      } catch (Exception exc) {
+        if (exc instanceof RuntimeException)
+          throw (RuntimeException) exc;
+        else
+          throw new RuntimeException(exc);
+      }
+    }
   }
   
   public FieldSpec[] getFields() {
@@ -330,7 +345,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     }
 
     inDoc.setField("indexed_at_tdt", new Date());
-    inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
+    //inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
 
     return inDoc;
   }
