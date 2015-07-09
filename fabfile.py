@@ -405,11 +405,13 @@ SOLR_JAVA_HOME="%s"
 SOLR_JAVA_MEM="%s"
 
 # Enable verbose GC logging
+#GC_LOG_OPTS="-Xprof -agentpath:/home/ec2-user/yjp-2015-build-15064/bin/linux-x86-64/libyjpagent.so -verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails \
 GC_LOG_OPTS="-verbose:gc -XX:+PrintHeapAtGC -XX:+PrintGCDetails \
 -XX:+PrintGCDateStamps -XX:+PrintGCCause -XX:+PrintTenuringDistribution -XX:+PrintGCApplicationStoppedTime"
 
 # These GC settings have shown to work well for a number of common Solr workloads
-GC_TUNE="-XX:NewRatio=3 \
+GC_TUNE="-XX:+UseNUMA \
+-XX:NewRatio=4 \
 -XX:+UseAdaptiveSizePolicy \
 -XX:+UseParNewGC \
 -XX:ConcGCThreads=4 \
@@ -424,8 +426,7 @@ GC_TUNE="-XX:NewRatio=3 \
 -XX:CMSInitiatingOccupancyFraction=50 \
 -XX:CMSMaxAbortablePrecleanTime=6000 \
 -XX:+CMSParallelRemarkEnabled \
--XX:+ParallelRefProcEnabled \
--XX:-UseBiasedLocking"
+-XX:+ParallelRefProcEnabled"
 
 # Set the ZooKeeper connection string if using an external ZooKeeper ensemble
 # e.g. host1:2181,host2:2181/chroot
