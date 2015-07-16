@@ -116,9 +116,32 @@ For more information about boto, please see: https://github.com/boto/boto
 
 You'll need to setup a security group named solr-scale-tk (or update the fabfile.py to change the name).
 
-At a minimum you should allow TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
+At a minimum you should allow inbound TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
+You should ensure that the solr-scale-tk security group (or whatever you name it) has full TCP inbound traffic to all nodes (for ZooKeeper), which is accomplished by adding the security group as an inbound rule,
+see: http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-network-security.html
 
 You'll also need to create an keypair (using the Amazon console) named solr-scale-tk (you can rename the key used by the framework, see: AWS_KEY_NAME). After downloading the keypair file (solr-scale-tk.pem), save it to ~/.ssh/ and change permissions: chmod 600 ~/.ssh/solr-scale-tk.pem
+
+You can name the security group and keypair whatever you want, however if you change the names, then you need to customize your ~/.sstk file to override the defaults, such as:
+
+```
+"ssh_keyfile_path_on_local": "YOUR PEM FILE",
+"AWS_KEY_NAME": "YOUR KEY NAME",
+```
+
+Using the US West (N. California) Region
+--------
+
+By default, the toolkit launches instances in the us-east-1 region (N. Virginia). If you want to launch in the us-west-1 region (N. California), then you need to override a few properties in your ~/.sstk file:
+
+```
+"region": "us-west-1"
+"AWS_AZ":"us-west-1b",
+"AWS_PV_AMI_ID":"ami-b9b240fd",
+"AWS_HVM_AMI_ID":"ami-f59062b1"
+```
+
+You'll also need to ensure the security group / keypair exist in the us-west-1 region as these are not visible across regions. In other words, if you created the security group / keypair in the us-east-1 region, and then moved to the west, then you'll need to re-create the security group / keypairs.
 
 Overview
 ========
