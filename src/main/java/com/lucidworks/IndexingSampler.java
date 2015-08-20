@@ -207,6 +207,8 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       } catch (Exception exc) {
         throw new RuntimeException(exc);
       }
+    } else if ("datagenonly".equals(type)) {
+      // ok
     } else {
       throw new IllegalArgumentException(type + " not supported!");
     }

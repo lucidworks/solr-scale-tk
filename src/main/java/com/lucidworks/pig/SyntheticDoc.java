@@ -1,10 +1,7 @@
 package com.lucidworks.pig;
 
 import java.io.IOException;
-import java.util.Collection;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Random;
+import java.util.*;
 
 import org.apache.pig.EvalFunc;
 import org.apache.pig.data.DataBag;
@@ -36,7 +33,11 @@ public class SyntheticDoc extends EvalFunc<DataBag> {
     
     public SyntheticDoc(String numDocsPerKey, String seed) {
       datagen = new IndexingSampler();
-      datagen.setup(new HashMap<String,String>());
+      Map<String,String> params = new HashMap<String,String>();
+      params.put("ENDPOINT_TYPE", "datagenonly");
+
+      datagen.setup(params);
+
       random = new Random();
       
       fields = datagen.getFields();      
