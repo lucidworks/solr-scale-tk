@@ -283,3 +283,29 @@ This will start the Fusion API service on port 8765, the Fusion UI service on po
 
 After running fusion_start, you can direct your Web browser to the Fusion UI at http://host:8764
 
+JMeter
+========
+
+1. Download JMeter 2.13 from :
+
+```
+http://mirror.olnevhost.net/pub/apache//jmeter/binaries/apache-jmeter-2.13.tgz
+```
+
+2. After extracting JMeter, you need to go to the lib/ folder and remove httpclient-4.2.6 and httpcore-4.2.5.jar as SolrJ requires a newer version of these two JARs which are backwards incompatible with these versions.
+
+3. You can build the project by running
+
+```
+mvn clean package
+```
+
+4. Copy over solr-scale-tk-0.1 along with SolrJ dependencies to JMeter's lib/ext folder
+
+5. Run JMeter load test:
+
+```
+./jmeter -n -t ~/solr-scale-tk/query.jmx -l query.log
+```
+query.log is where the JMeter test logs would go
+query.jmx is the file which the test will use to load up parameters.
