@@ -62,7 +62,7 @@
     <dependency>
       <groupId>org.apache.solr</groupId>
       <artifactId>solr-solrj</artifactId>
-      <version>5.2.0</version>
+      <version>5.2.1</version>
       <type>jar</type>
     </dependency>
     <dependency>
@@ -107,25 +107,27 @@
     </dependency>
     <dependency>
       <groupId>org.apache.jmeter</groupId>
-      <artifactId>ApacheJMeter_core</artifactId>
-      <version>2.11</version>
-      <exclusions>
-        <exclusion>
-          <groupId>com.fifesoft</groupId>
-          <artifactId>rsyntaxtextarea</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.jmeter</groupId>
       <artifactId>ApacheJMeter_java</artifactId>
-      <version>2.11</version>
+      <version>2.13</version>
       <exclusions>
         <exclusion>
           <groupId>com.fifesoft</groupId>
           <artifactId>rsyntaxtextarea</artifactId>
         </exclusion>
+        <exclusion>
+          <groupId>commons-math3</groupId>
+          <artifactId>commons-math3</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>commons-pool2</groupId>
+          <artifactId>commons-pool2</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>commons-httpclient</groupId>
+          <artifactId>commons-httpclient</artifactId>
+        </exclusion>
       </exclusions>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>com.sun.mail</groupId>
@@ -146,17 +148,17 @@
       <systemPath>${basedir}/lib/sdsuLibJKD12.jar</systemPath>
     </dependency>
 
-<dependency>
-	<groupId>org.apache.pig</groupId>
-	<artifactId>pig</artifactId>
-	<version>0.11.1</version>
-</dependency>
+    <dependency>
+      <groupId>org.apache.pig</groupId>
+      <artifactId>pig</artifactId>
+      <version>0.11.1</version>
+    </dependency>
 
-<dependency>
-	<groupId>org.apache.hadoop</groupId>
-	<artifactId>hadoop-core</artifactId>
-	<version>1.0.3</version>
-</dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-core</artifactId>
+      <version>1.0.3</version>
+    </dependency>
 
     <dependency>
       <groupId>com.googlecode.json-simple</groupId>
@@ -164,10 +166,19 @@
       <version>1.1.1</version>
     </dependency>
 
+    <!-- We need the latest httpclient and httpcore since the one used in jmeter 4.2.6 is not compatible with solrj-->
+    <!-- Remove httpclient-4.2.6  and httpcore-4.2.5 from lib/ of jmeter -->
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.4.1</version>
+    </dependency>
 
-
-
-
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpcore</artifactId>
+      <version>4.4.1</version>
+    </dependency>
 
   </dependencies>
 </project>
