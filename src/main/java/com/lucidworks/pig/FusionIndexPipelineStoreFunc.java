@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-import com.lucidworks.HttpIndexPipelineClient;
+import com.lucidworks.client.FusionPipelineClient;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.mapreduce.Counter;
 import org.apache.hadoop.mapreduce.Job;
@@ -22,8 +22,6 @@ import org.apache.pig.impl.util.UDFContext;
 import org.apache.pig.tools.pigstats.PigStatusReporter;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.common.SolrException;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,10 +53,13 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
 
   private static final String FIELD_NAMES_FROM_SCHEMA_PROPS_KEY = "fieldNamesFromSchema";
 
+  protected String fusionUser;
+  protected String fusionPass;
+  protected String fusionRealm;
   protected String endpoints;
   private ExecutorService executor = null;
 
-  protected JSONArray batch = new JSONArray();
+  protected List batch = new ArrayList();
   protected int batchSize = 100;
   protected int batchCount = 0;
   protected int docCount = 0;
@@ -72,12 +73,14 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   // List of field names in the input tuple
   private List<String> fieldNamesFromSchema = null;
 
-  protected HttpIndexPipelineClient pipelineClient;
+  protected FusionPipelineClient pipelineClient;
 
-  public FusionIndexPipelineStoreFunc(String endpoints, String batchSize) throws SolrServerException, IOException {
+  public FusionIndexPipelineStoreFunc(String endpoints, String batchSize, String fusionUser, String fusionPass, String fusionRealm) throws SolrServerException, IOException {
+    this.fusionUser = fusionUser;
+    this.fusionPass = fusionPass;
+    this.fusionRealm = fusionRealm;
     this.endpoints = endpoints;
     this.batchSize = Integer.parseInt(batchSize);
-    //pipelineClient = new HttpIndexPipelineClient(endpoints);
   }
 
   public void putNext(Tuple input) throws IOException {
@@ -109,7 +112,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
       return; // don't fail the job due to bad input
     }
 
-    JSONObject solrDoc = tupleToJsonDoc(input);
+    Map<String,Object> solrDoc = tupleToJsonDoc(input);
     if (solrDoc == null) {
       return; // bad input ... keep on trucking though
     }
@@ -150,7 +153,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     }
   }
 
-  protected boolean sendBatchWithTimeout(final JSONArray theBatch, final int timeoutSecs) throws IOException {
+  protected boolean sendBatchWithTimeout(final List theBatch, final int timeoutSecs) throws IOException {
 
     synchronized (this) {
       if (executor == null) {
@@ -161,7 +164,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     Callable<Object> task = new Callable<Object>() {
       public Object call() {
         try {
-          FusionIndexPipelineStoreFunc.this.pipelineClient.postDocsToPipeline(theBatch);
+          FusionIndexPipelineStoreFunc.this.pipelineClient.postBatchToPipeline(theBatch);
           return Boolean.TRUE;
         } catch (Exception exc) {
           log.error("{In java.util.concurrent.Callable} Failed to send batch after " + timeoutSecs + " secs due to: " + exc.toString());
@@ -218,7 +221,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     return sentBatchOk;
   }
 
-  protected JSONObject tupleToJsonDoc(Tuple input) {
+  protected Map<String,Object> tupleToJsonDoc(Tuple input) {
 
     if (input.size() < fieldNamesFromSchema.size()) {
       // schema mis-match? ignore this doc so that we don't pollute our
@@ -227,7 +230,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
       return null;
     }
 
-    JSONObject doc = new JSONObject();
+    Map<String,Object> doc = new HashMap<String,Object>();
     int size = input.size();
     try {
       for (int i = 0; i < size; i++) {
@@ -236,7 +239,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
           String fieldName = fieldNamesFromSchema.get(i);
           if (value instanceof DataBag) {
             DataBag bag = (DataBag) value;
-            JSONArray list = new JSONArray();
+            List<Object> list = new ArrayList<Object>();
             for (Tuple t : bag) {
               list.add(t.get(0));
             }
@@ -253,15 +256,14 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
       return null;
     }
 
-    doc.put("created", ISO_8601_DATE_FMT.format(new Date()));
-
+    doc.put("indexed_at_tdt", ISO_8601_DATE_FMT.format(new Date()));
     return doc;
   }
 
-  protected void index(JSONObject doc) throws Exception {
-    JSONArray list = new JSONArray();
+  protected void index(Map<String,Object> doc) throws Exception {
+    List list = new ArrayList();
     list.add(doc);
-    pipelineClient.postDocsToPipeline(list);
+    pipelineClient.postBatchToPipeline(list);
   }
 
   protected void commit() {
@@ -294,7 +296,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
         int recovered = 0; // how many in the batch were we able to recover?
         int errorsWhileRecovering = 0;
         for (int j=0; j < batch.size(); j++) {
-          JSONObject doc = (JSONObject)batch.get(j);
+          Map<String,Object> doc = (Map<String,Object>)batch.get(j);
           try {
             index(doc);
             ++recovered;
@@ -474,7 +476,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   @Override
   public void prepareToWrite(RecordWriter writer) throws IOException {
     try {
-      pipelineClient = new HttpIndexPipelineClient(endpoints);
+      pipelineClient = new FusionPipelineClient(endpoints, fusionUser, fusionPass, fusionRealm);
     } catch (Exception e) {
       log.error("Unable to connect to: " + endpoints);
       throw new IOException("Unable to connect to: " + endpoints, e);
@@ -483,7 +485,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     if (batch != null) {
       batch.clear();
     } else {
-      batch = new JSONArray();
+      batch = new ArrayList();
     }
   }
 

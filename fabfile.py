@@ -46,8 +46,8 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_45'
-_config['solr_tip'] = '${user_home}/solr-5.2.0'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_60'
+_config['solr_tip'] = '${user_home}/solr-5.2.1'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -477,7 +477,7 @@ def _get_zk_hosts(cloud, zk):
         zkHosts.append(zkInstances[key] + ':2181')
     return zkHosts
 
-def _check_zk_health(n, hosts, maxWait=60):
+def _check_zk_health(n, hosts, maxWait=90):
     waitTime = 0
     startedAt = time.time()
     zkHealthy = False
@@ -2526,8 +2526,23 @@ def stats(cluster):
 ### The following tasks are for working with Lucidworks Fusion services
 
 def _fusion_api(host, apiEndpoint, method='GET', json=None):
-    dashd = "" if json is None else " -d '"+json+"'"
-    local("curl -u admin:password123 -H 'Content-type: application/json' -X %s%s http://%s:8765/api/v1/%s" % (method, dashd, host, apiEndpoint))
+    resp = ""
+    if method == 'GET':
+        apiUrl = "http://%s:8765/api/v1/%s" % (host, apiEndpoint)
+        try:
+            response = urllib2.urlopen(apiUrl)
+            resp = response.read()
+        except urllib2.HTTPError as e:
+            _error('Fusion API request to '+apiUrl+' failed due to: %s' % str(e) + '\n' + e.read())
+        except urllib2.URLError as ue:
+            _error('Fusion API request to '+apiUrl+' failed due to: %s' % str(ue) + '\n' + ue.read())
+
+    else:
+        dashd = "" if json is None else " -d '"+json+"'"
+        resp = local("curl -H 'Content-type: application/json' -X %s%s http://%s:8765/api/v1/%s" % (method, dashd, host, apiEndpoint),capture=True)
+
+    return resp
+
 
 def fusion_nodes(cluster):
     hosts = _lookup_hosts(cluster)
@@ -2546,7 +2561,7 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     nodes = len(hosts) * numNodes
     replicas = int(rf) * int(shards)
     maxShardsPerNode = int(max(1, round(replicas / nodes)))
-    json = '{ "id":"'+name+'", "solrConfName":"'+conf+'", "solrParams": { "replicationFactor":'+rf+', "numShards":'+shards+', "maxShardsPerNode":'+str(maxShardsPerNode)+' }}'
+    json = '{ "id":"'+name+'", "solrConfName":"'+conf+'", "solrParams": { "replicationFactor":'+str(rf)+', "numShards":'+str(shards)+', "maxShardsPerNode":'+str(maxShardsPerNode)+' }}'
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
@@ -2564,6 +2579,8 @@ def fusion_start(cluster,api=1,ui=1,connectors=1):
 
     fusionHome = _env(cluster, 'fusion_home')
     fusionBin = fusionHome+'/bin'
+    fusionConf = fusionHome+'/conf'
+    fusionLogs = fusionHome+'/var/log'
 
     # create the fusion.in.sh include file
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
@@ -2613,9 +2630,14 @@ GC_LOG_OPTS=(-verbose:gc \
 	-XX:+PrintHeapAtGC \
 	-XX:+PrintGCDetails \
 	-XX:+PrintGCDateStamps \
-	-XX:+PrintGCTimeStamps \
+	-XX:+PrintGCCause \
 	-XX:+PrintTenuringDistribution \
-	-XX:+PrintGCApplicationStoppedTime)
+	-XX:+UseGCLogFileRotation \
+	-XX:NumberOfGCLogFiles=20 \
+	-XX:GCLogFileSize=10M)
+
+# The origins that are allowed to serve resources
+FUSION_CORS_ALLOW_ORIGIN=\.\*
 
 # These GC settings have shown to work well for a number of common Solr workloads
 GC_TUNE=(-XX:NewRatio=3 \
@@ -2636,30 +2658,51 @@ GC_TUNE=(-XX:NewRatio=3 \
 
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            run('mv '+fusionBin+'/config.sh '+fusionBin+'/config.sh.bak')
+            run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak')
             _status('Uploading config.sh includes file to '+host)
-            _fab_append(fusionBin+'/config.sh', fusionConfigSh)
+            _fab_append(fusionConf+'/config.sh', fusionConfigSh)
 
     # start fusion, ui, connectors
-    numFusionNodes = int(api)
-    if numFusionNodes > len(hosts):
+    numApiNodes = int(api)
+    if numApiNodes > len(hosts):
         _fatal('Cannot start more than %d Fusion nodes!' % len(hosts))
+
     numUINodes = int(ui)
     if numUINodes > len(hosts):
         _fatal('Cannot start more than %d UI nodes!' % len(hosts))
+
     numConnectorsNodes = int(connectors)
     if numConnectorsNodes > len(hosts):
         _fatal('Cannot start more than %d Connectors nodes!' % len(hosts))
 
-    if numFusionNodes > 0:
-        _status('Starting Fusion service on %d nodes.' % numFusionNodes)
-        for host in hosts[0:numFusionNodes]:
+    if numApiNodes > 0:
+        _status('Starting Fusion API service on %d nodes.' % numApiNodes)
+        for host in hosts[0:numApiNodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/api stop || true')
-                _runbg(fusionBin+'/api restart', fusionHome+'/logs/api/restart.out')
-                #run('nohup '+fusionBin+'/api restart > '+fusionHome+'/logs/api/run.out 2>&1 &', pty=False)
-                time.sleep(2)
+                _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
+                time.sleep(10)
                 _info('Started Fusion API service on '+host)
+
+    # TODO: need to support multiple instances of these
+    with settings(host_string=host), hide('output', 'running'):
+        run(fusionBin+'/spark-master stop || true')
+        _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+        time.sleep(2)
+        _info('Started Spark-Master service on '+host)
+        run(fusionBin+'/spark-worker stop || true')
+        _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+        time.sleep(2)
+        _info('Started Spark-Worker service on '+host)
+
+    if numConnectorsNodes > 0:
+        _status('Starting Fusion Connectors service on %d nodes.' % numUINodes)
+        for host in hosts[0:numConnectorsNodes]:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/connectors stop || true')
+                _runbg(fusionBin+'/connectors restart', fusionLogs+'/connectors/restart.out')
+                time.sleep(5)
+                _info('Started Connectors service on '+host)
 
     fusionUIUrl = None
     if numUINodes > 0:
@@ -2667,20 +2710,16 @@ GC_TUNE=(-XX:NewRatio=3 \
         for host in hosts[0:numUINodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/ui stop || true')
-                run('nohup '+fusionBin+'/ui restart > '+fusionHome+'/logs/ui/run.out 2>&1 &', pty=False)
-                time.sleep(2)
+                _runbg(fusionBin+'/ui restart', fusionLogs+'/ui/restart.out')
+                time.sleep(5)
                 _info('Started Fusion UI service on '+host)
                 if fusionUIUrl is None:
                     fusionUIUrl = 'http://'+host+':8764'
 
-    if numConnectorsNodes > 0:
-        _status('Starting Fusion Connectors service on %d nodes.' % numUINodes)
-        for host in hosts[0:numConnectorsNodes]:
-            with settings(host_string=host), hide('output', 'running'):
-                run(fusionBin+'/connectors stop || true')
-                run('nohup '+fusionBin+'/connectors restart > '+fusionHome+'/logs/connectors/run.out 2>&1 &', pty=False)
-                time.sleep(2)
-                _info('Started Connectors service on '+host)
+    for host in hosts[0:numApiNodes]:
+        pingResp = _fusion_api(host, 'system/ping')
+        if pingResp != 'pong':
+            _fatal('ping '+host+' failed! Check status of Fusion and retry')
 
     if fusionUIUrl is not None:
         _info('Fusion is running, please go to: '+fusionUIUrl)
@@ -2760,7 +2799,7 @@ def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.4.0'):
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,fusion=n)
 
-def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,overwriteExisting=False):
+def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusionVers=None,overwriteExisting=False):
     """
     Downloads Solr, ZooKeeper, and optionally Fusion and then builds a local cluster.
     """
@@ -2842,7 +2881,7 @@ def setup_local(cluster,tip,solrVers='4.10.2',zkVers='3.4.6',fusionVers=None,ove
         cfg['solr_java_home'] = os.environ['JAVA_HOME']
     _save_config()
 
-    setup_solrcloud(cluster)
+    setup_solrcloud(cluster=cluster,nodesPerHost=numSolrNodes)
 
     if fusionTip is not None:
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
@@ -2871,7 +2910,9 @@ def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
                     keep_alive=keep_alive,
                     steps=steps,
                     enable_debugging=True,
-                    action_on_failure='CONTINUE')
+                    action_on_failure='CONTINUE',
+                    job_flow_role='EMR_EC2_DefaultRole',
+                    service_role='EMR_DefaultRole')
 
     _info('launched job_flow_id: %s, waiting up to %d secs to see it RUNNING' % (job_flow_id, maxWait))
 
@@ -2880,11 +2921,14 @@ def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
     isRunning = False
     lastState = 'unknown'
     while isRunning is False and waitTime < maxWait:
-        isRunning = True
+        isRunning = False
 
-        status = emr.describe_jobflow(job_flow_id)
-        lastState = status.state
-        isRunning = (lastState == 'RUNNING')
+        clusterSummaryList = emr.list_clusters(cluster_states=['RUNNING','WAITING'])
+        if clusterSummaryList is not None and len(clusterSummaryList.clusters) > 0:
+            for c in clusterSummaryList.clusters:
+                if c.name == cluster:
+                    isRunning = True
+                    break
 
         if isRunning is False:
             time.sleep(10)
@@ -2892,9 +2936,10 @@ def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
             _status('Waited %d seconds so far to verify cluster %s is running.' % (waitTime, job_flow_id))
 
     if isRunning:
-        _info('Cluster '+job_flow_id+' is now running.')
+        _info('Cluster '+cluster+' ('+job_flow_id+') is now running.')
     else:
-        _error('Wait to see RUNNING state timed out after %d seconds! Last state was %s' % (maxWait, lastState))
+        _error('Wait to see cluster '+cluster+' ('+job_flow_id+
+               ') in RUNNING state timed out after %d seconds! Last state was %s' % (maxWait, lastState))
 
     # Save the Job Flow ID for lookup
     sstk_cfg = _get_config()
@@ -2930,7 +2975,7 @@ def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_
     emr.add_jobflow_steps(job_flow_id, [pigStep])
 
 
-def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_10m', batch_size='1500', reducers='12', region='us-east-1'):
+def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1'):
 
     # lookup the job flow ID of the cluster
     sstk_cfg = _get_config()
@@ -2946,7 +2991,7 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
-    stepName = 'pig-'+collection+'-'+nowStr
+    stepName = 'pig-solr-'+collection+'-'+nowStr
     pigFile = 's3://solr-scale-tk/pig/'+pig
 
     pigArgs = ['-p','INPUT='+input,
@@ -2958,3 +3003,190 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
 
     emr.add_jobflow_steps(job_flow_id, [pigStep])
+
+def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None):
+
+    # lookup the job flow ID of the cluster
+    sstk_cfg = _get_config()
+    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
+
+    batchSize = int(batch_size)
+    numReducers = int(reducers)
+
+    emr = boto.emr.connect_to_region(region)
+
+    now = datetime.datetime.utcnow()
+    nowStr = now.strftime("%Y%m%d-%H%M%S")
+
+    stepName = 'pig-fusion-'+collection+'-'+nowStr
+    pigFile = 's3://solr-scale-tk/pig/'+pig
+
+    hosts = _lookup_hosts(fusionCluster)
+
+    if pipeline is None:
+        pipeline = collection+'-default'
+
+    # TODO: verify the proxy endpoint as you build up the list
+    fusionEndpoint = ''
+    for host in hosts:
+        if len(fusionEndpoint) > 0:
+            fusionEndpoint += ','
+        fusionEndpoint += 'http://'+host+':8764/api/apollo/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+
+    pigArgs = ['-p','INPUT='+input,
+               '-p','REDUCERS='+str(numReducers),
+               '-p','FUSION_ENDPOINT='+fusionEndpoint,
+               '-p','FUSION_BATCH_SIZE='+str(batchSize),
+               '-p','FUSION_USER=admin',
+               '-p','FUSION_PASS=password123',
+               '-p','FUSION_REALM=native',
+               '-p','SSTK_JAR=s3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar']
+
+    pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
+
+    emr.add_jobflow_steps(job_flow_id, [pigStep])
+
+    return stepName
+
+
+def fusion_perf_test(cluster, n=3, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700):
+    new_solrcloud(cluster, n=n, zkn=min(3,n), instance_type=instance_type, placement_group=placement_group)
+    deploy_config(cluster,'data_driven_schema_configs','perf')
+    fusion_start(cluster,api=n,connectors=1,ui=1)
+
+    hosts = _lookup_hosts(cluster)
+
+    # set the initial password for the new Fusion cluster
+    fusionPasswd = '{"password":"password123"}'
+    local("curl -H 'Content-type: application/json' -d '"+fusionPasswd+"' -X POST http://"+hosts[0]+":8764/api", capture=True)
+
+    fusion_new_collection(cluster,name='perf',rf=2,shards=n,conf='perf')
+    #fusion_new_collection(cluster,name='perf_js',rf=2,shards=n,conf='perf')
+
+    pipelineDef = """{
+  "id" : "perf_js",
+  "stages" : [ {
+    "type" : "field-mapping",
+    "id" : "mapping-default",
+    "mappings" : [ {
+      "source" : "/(.*?)lat(itude)?$/",
+      "target" : "$1_lat_lon",
+      "operation" : "move"
+    }, {
+      "source" : "/(.*?)lon(gitude)?$/",
+      "target" : "$1_lat_lon",
+      "operation" : "move"
+    } ],
+    "skip" : false,
+    "label" : "field-mapping",
+    "type" : "field-mapping"
+  }, {
+    "type" : "javascript-index",
+    "id" : "rmeljtt9",
+    "script" : "function(doc) { var id = doc.getId(); var api = doc.getFirstFieldValue('_lw_data_source_s'); if (!api) api = 'fusion_performance_tests'; doc.setId(id + '_' + api); doc.addField('logical_collection_s', api); doc.addField('display_name_s', api.slice(36)); return doc; }",
+    "skip" : false,
+    "label" : "JavaScript",
+    "type" : "javascript-index"
+  }, {
+    "type" : "solr-index",
+    "id" : "4dc28224-c7b1-4da2-892a-a55c1301ed6f",
+    "enforceSchema" : true,
+    "bufferDocsForSolr" : true,
+    "skip" : false,
+    "label" : "solr-index",
+    "type" : "solr-index"
+  } ]
+}"""
+    # _fusion_api(hosts[0], 'index-pipelines', 'POST', pipelineDef)
+    _info("http://"+hosts[0]+":8764")
+
+    # raise the buffer size for high-volume indexing into Solr
+    searchCluster = _fusion_api(hosts[0], 'searchCluster/default')
+    sc = json.loads(searchCluster)
+    sc['bufferSize'] = '500'
+    _fusion_api(hosts[0], 'searchCluster/default', 'PUT', json.dumps(sc))
+
+    emrCluster = 'fusionEmr'
+    emr_new_cluster(emrCluster,region=region)
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf-default',collection='perf', region=region)
+
+    sstk_cfg = _get_config()
+    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
+    _info('job flow is '+job_flow_id)
+
+    # wait up to 30 minutes for the indexing job to complete
+    emr = boto.emr.connect_to_region(region)
+    steps = emr.list_steps(job_flow_id)
+    stepId = None
+    for s in steps.steps:
+        if s.name == stepName:
+            stepId = s.id
+            break
+
+    if stepId is None:
+        _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
+
+    stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWait=maxWaitSecs)
+
+    # job completed ...
+    if stepStatus == 'COMPLETED':
+        throughput = _estimate_indexing_throughput(cluster, 'perf')
+        _info('Achieved '+(throughput)+' docs per second')
+
+    #emr.terminate_jobflow(job_flow_id)
+
+def _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=1800):
+    """
+[~/dev/lw/projects/solr-scale-tk]$ fab estimate_indexing_throughput:perf21rc1
+time diff: 0:31:25.510000
+throughput: (4992889) 2648.0310367
+    """
+    isDone = False
+    waitTime = 0
+    startedAt = time.time()
+    maxWait = int(maxWaitSecs)
+    loops = 0
+    stepState = 'UNKNOWN'
+    _status('Waiting up to %d seconds to see step %s complete for job flow %s' % (maxWait, stepName, job_flow_id))
+    while isDone is False and waitTime < maxWait:
+        stepState = emr.describe_step(job_flow_id, stepId).status.state
+        if stepState != 'RUNNING' and stepState != 'STARTING':
+            isDone = True
+            break
+
+        time.sleep(30)
+        waitTime = round(time.time() - startedAt)
+        if loops > 0 and loops % 2 == 0:
+            _status('Waited %d seconds so far for step %s to complete' % (waitTime, stepName))
+
+        loops += 1
+
+    if isDone:
+        _info('Step %s %s in ~%d seconds' % (stepName, stepState, waitTime))
+    else:
+        _error('Step %s failed to complete within %d seconds!' % (stepName, maxWait))
+
+    return stepState
+
+def estimate_indexing_throughput(cluster, collection):
+    tp = _estimate_indexing_throughput(cluster, collection)
+    print('throughput: '+str(tp))
+
+def _estimate_indexing_throughput(cluster, collection):
+    hosts = _lookup_hosts(cluster)
+    timestampField = 'indexed_at_tdt'
+    solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' ASC'})
+    if results.hits <= 0:
+        _error('No results found in Solr!')
+
+    earliestDoc = results.docs[0][timestampField]
+    earliestTime = dateutil.parser.parse(earliestDoc)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' DESC'})
+    latestTime = dateutil.parser.parse(results.docs[0][timestampField])
+    duration = (latestTime-earliestTime).total_seconds()
+    tp = 0
+    if duration > 0:
+        tp = results.hits / duration
+
+    return tp

@@ -1,10 +1,7 @@
-REGISTER 's3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar'
+REGISTER '$SSTK_JAR'
+-- s3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar
 -- REGISTER '/Users/timpotter/dev/lw/projects/solr-scale-tk/target/solr-scale-tk-0.1-exe.jar'
-
--- s3://solr-scale-tk/pig/s3_to_fusion.pig
--- s3://solr-scale-tk/pig/output/v8/
--- s3://solr-scale-tk/pig/output/foo/
--- -p RED=21 -p batch=500 -p ENDPOINT=http://localhost:8765/lucid/api/v1/index-pipelines/conn_solr/collections/foo/index
+-- http://ec2-52-20-196-79.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index,http://ec2-52-20-196-79.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index,http://ec2-52-20-255-7.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index
 
 SET mapred.map.tasks.speculative.execution false;
 SET mapred.reduce.tasks.speculative.execution false;
@@ -36,21 +33,22 @@ data = load '$INPUT' using PigStorage() as (id: chararray,
   random_bucket: float);
 
 to_sort = foreach data generate id,
-  'integer1_i', integer1_i,
-  'integer2_i', integer2_i,
-  'long1_l', long1_l,
-  'long2_l', long2_l,
-  'float1_f', float1_f,
-  'float2_f', float2_f,
-  'double1_d', double1_d,
-  'double2_d', double2_d,
-  'timestamp1_tdt', timestamp1_tdt,
-  'timestamp2_tdt', timestamp2_tdt,
-  'string1_s', string1_s,
-  'string2_s', string2_s,
-  'boolean1_b', boolean1_b,
-  'text1_en', text1_en,
-  'text3_en', text3_en;
-  
-to_solr = order to_sort by id ASC parallel $RED;
-store to_solr into 'foo' using com.lucidworks.pig.FusionIndexPipelineStoreFunc('$ENDPOINT','$batch');
+  integer1_i,
+  integer2_i,
+  long1_l,
+  long2_l,
+  float1_f,
+  float2_f,
+  double1_d,
+  double2_d,
+  timestamp1_tdt,
+  timestamp2_tdt,
+  string1_s,
+  string2_s,
+  boolean1_b,
+  text1_en,
+  text3_en;
+
+to_solr = order to_sort by id ASC parallel $REDUCERS;
+store to_solr into 'Fusion' using
+  com.lucidworks.pig.FusionIndexPipelineStoreFunc('$FUSION_ENDPOINT','$FUSION_BATCH_SIZE','$FUSION_USER','$FUSION_PASS','$FUSION_REALM');

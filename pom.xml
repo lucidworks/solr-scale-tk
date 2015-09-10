@@ -13,23 +13,20 @@
   <build>
     <plugins>
       <plugin>
-        <artifactId>maven-assembly-plugin</artifactId>
+        <groupId>com.googlecode.addjars-maven-plugin</groupId>
+        <artifactId>addjars-maven-plugin</artifactId>
+        <version>1.0.5</version>
         <executions>
           <execution>
-            <id>make-exe-jar</id>
-            <phase>package</phase>
             <goals>
-              <goal>single</goal>
+              <goal>add-jars</goal>
             </goals>
             <configuration>
-              <descriptors>
-                <descriptor>src/main/assembly/assembly-with-solrj.xml</descriptor>
-              </descriptors>
-              <archive>
-                <manifest>
-                  <mainClass>com.lucidworks.SolrCloudTools</mainClass>
-                </manifest>
-              </archive>
+              <resources>
+                <resource>
+                  <directory>${basedir}/lib</directory>
+                </resource>
+              </resources>
             </configuration>
           </execution>
         </executions>
@@ -39,8 +36,8 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>2.0.2</version>
         <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
+          <source>1.7</source>
+          <target>1.7</target>
         </configuration>
       </plugin>
       <plugin>
@@ -49,6 +46,82 @@
         <configuration>
           <argLine>-Xmx512m</argLine>
         </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>2.3</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <shadedArtifactAttached>true</shadedArtifactAttached>
+              <shadedClassifierName>exe</shadedClassifierName>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <artifactSet>
+                <excludes>
+                  <exclude>org.apache.hadoop:*</exclude>
+                  <exclude>org.apache.pig:*</exclude>
+                </excludes>
+              </artifactSet>
+              <relocations>
+                <relocation>
+                  <pattern>org.apache.http</pattern>
+                  <shadedPattern>shaded.apache.http</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.objectweb.asm</pattern>
+                  <shadedPattern>shaded.objectweb.asm</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.joda.time</pattern>
+                  <shadedPattern>shaded.joda.time</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>com.google.guava</pattern>
+                  <shadedPattern>shaded.google.guava</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>com.sun.jersey</pattern>
+                  <shadedPattern>shaded.sun.jersey</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>javax.ws.rs</pattern>
+                  <shadedPattern>shaded.javax.ws.rs</shadedPattern>
+                </relocation>
+                <relocation>
+                  <pattern>org.apache.solr</pattern>
+                  <shadedPattern>shaded.apache.solr</shadedPattern>
+                </relocation>
+              </relocations>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>2.4</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
@@ -62,7 +135,7 @@
     <dependency>
       <groupId>org.apache.solr</groupId>
       <artifactId>solr-solrj</artifactId>
-      <version>5.2.0</version>
+      <version>5.2.1</version>
       <type>jar</type>
     </dependency>
     <dependency>
@@ -145,29 +218,38 @@
       <scope>system</scope>
       <systemPath>${basedir}/lib/sdsuLibJKD12.jar</systemPath>
     </dependency>
-
-<dependency>
-	<groupId>org.apache.pig</groupId>
-	<artifactId>pig</artifactId>
-	<version>0.11.1</version>
-</dependency>
-
-<dependency>
-	<groupId>org.apache.hadoop</groupId>
-	<artifactId>hadoop-core</artifactId>
-	<version>1.0.3</version>
-</dependency>
-
+    <dependency>
+      <groupId>org.apache.pig</groupId>
+      <artifactId>pig</artifactId>
+      <version>0.14.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+      <version>2.6.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <version>2.6.0</version>
+    </dependency>
     <dependency>
       <groupId>com.googlecode.json-simple</groupId>
       <artifactId>json-simple</artifactId>
       <version>1.1.1</version>
     </dependency>
-
-
-
-
-
-
+    <dependency>
+      <groupId>com.lucidworks</groupId>
+      <artifactId>fusion-client-tools</artifactId>
+      <version>1.0</version>
+      <type>jar</type>
+      <scope>system</scope>
+      <systemPath>${basedir}/lib/fusion-client-tools-1.0.jar</systemPath>
+    </dependency>
+    <dependency>
+      <groupId>com.yammer.metrics</groupId>
+      <artifactId>metrics-core</artifactId>
+      <version>2.2.0</version>
+    </dependency>
   </dependencies>
 </project>
