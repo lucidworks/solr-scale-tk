@@ -2683,7 +2683,8 @@ def _fusion_api(host, apiEndpoint, method='GET', json=None):
     else:
         postToApiUrl = ("http://%s:8765/api/v1/%s" % (host, apiEndpoint))
         req = urllib2.Request(postToApiUrl)
-        req.add_header('Content-Type', 'application/json')
+        if json is not None:
+            req.add_header('Content-Type', 'application/json')
         if method != 'POST':
             req.get_method = lambda: method # this feels like a dirty little hack
 
@@ -3411,7 +3412,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     # job completed ...
     if stepStatus == 'COMPLETED':
         throughput = _estimate_indexing_throughput(cluster, 'perf')
-        _info('Achieved '+(throughput)+' docs per second')
+        _info('Achieved %f docs per second', throughput)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
@@ -3455,4 +3456,7 @@ def estimate_indexing_throughput(cluster, collection):
     """
     tp = _estimate_indexing_throughput(cluster, collection)
     print('throughput: '+str(tp))
+
+
+
 
