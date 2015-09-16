@@ -137,8 +137,8 @@ By default, the toolkit launches instances in the us-east-1 region (N. Virginia)
 ```
 "region": "us-west-1"
 "AWS_AZ":"us-west-1b",
-"AWS_PV_AMI_ID":"ami-b9b240fd",
-"AWS_HVM_AMI_ID":"ami-f59062b1"
+"AWS_PV_AMI_ID":"ami-854580c1",
+"AWS_HVM_AMI_ID":"ami-e13efba5"
 ```
 
 You'll also need to ensure the security group / keypair exist in the us-west-1 region as these are not visible across regions. In other words, if you created the security group / keypair in the us-east-1 region, and then moved to the west, then you'll need to re-create the security group / keypairs.

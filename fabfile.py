@@ -27,8 +27,8 @@ import shutil
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_PV_AMI_ID = 'ami-8d52b9e6'
-AWS_HVM_AMI_ID = 'ami-e951ba82'
+AWS_PV_AMI_ID = 'ami-5d126438'
+AWS_HVM_AMI_ID = 'ami-21304644'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -343,7 +343,7 @@ def _verify_ssh_connectivity(hosts, maxWait=120):
     if len(hosts) == 1 and hosts[0] == 'localhost':
         return
 
-    _status('Verifying SSH connectivity to %d hosts' % len(hosts))
+    _status('Verifying SSH connectivity to %d hosts (will wait up to %d secs) ... please be patient as this can take a few minutes if EC2 is being cranky!' % (len(hosts), maxWait))
 
     waitTime = 0
     startedAt = time.time()
@@ -1026,6 +1026,137 @@ def _assign_overseer_nodes(hosts, numNodesPerHost, num_overseer_nodes, totalNode
             # _info('Using host: %d and port: 89%d as overseer' % (oHost, 84 + oPort))
             overseerNodes.add('%s:89%d_solr' % (hosts[oHost], 84 + oPort))
     return overseerNodes
+
+def _estimate_indexing_throughput(cluster, collection):
+    hosts = _lookup_hosts(cluster)
+    timestampField = 'indexed_at_tdt'
+    solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' ASC'})
+    if results.hits <= 0:
+        _error('No results found in Solr!')
+
+    earliestDoc = results.docs[0][timestampField]
+    earliestTime = dateutil.parser.parse(earliestDoc)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' DESC'})
+    latestTime = dateutil.parser.parse(results.docs[0][timestampField])
+    duration = (latestTime-earliestTime).total_seconds()
+    tp = 0
+    if duration > 0:
+        tp = results.hits / duration
+
+    return tp
+
+def _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=1800):
+    isDone = False
+    waitTime = 0
+    startedAt = time.time()
+    maxWait = int(maxWaitSecs)
+    loops = 0
+    stepState = 'UNKNOWN'
+    _status('Waiting up to %d seconds to see step %s complete for job flow %s' % (maxWait, stepName, job_flow_id))
+    while isDone is False and waitTime < maxWait:
+        stepState = emr.describe_step(job_flow_id, stepId).status.state
+        if stepState != 'RUNNING' and stepState != 'STARTING' and stepState != 'PENDING':
+            isDone = True
+            break
+
+        time.sleep(30)
+        waitTime = round(time.time() - startedAt)
+        if loops > 0 and loops % 2 == 0:
+            _status('Waited %d seconds so far for step %s to complete ... last state was %s' % (waitTime, stepName, stepState))
+
+        loops += 1
+
+    if isDone:
+        _info('Step %s %s in ~%d seconds' % (stepName, stepState, waitTime))
+    else:
+        _error('Step %s failed to complete within %d seconds!' % (stepName, maxWait))
+
+    return stepState
+
+def _wait_to_see_fusion_proxy_up(host, maxWaitSecs=30):
+    waitTime = 0
+    startedAt = time.time()
+    isRunning = False
+    maxWait = int(maxWaitSecs)
+    hostAndPort = host+':8764'
+    while isRunning is False and waitTime < maxWait:
+        isRunning = _is_fusion_proxy_up(hostAndPort)
+        if isRunning:
+            break
+
+        if isRunning is False:
+            time.sleep(10)
+            waitTime = round(time.time() - startedAt)
+            _status('Waited %d seconds so far to verify Fusion proxy is running on %s.' % (waitTime, hostAndPort))
+
+    return isRunning
+
+
+
+def _is_fusion_proxy_up(hostAndPort):
+    isProxyUp = False
+    try:
+        urllib2.urlopen(_HeadRequest('http://%s/' % hostAndPort))
+        _info('Fusion proxy at ' + hostAndPort + ' is online.')
+        isProxyUp = True
+    except:
+        isProxyUp = False
+
+    return isProxyUp
+
+def _wait_to_see_fusion_api_up(apiHost, maxWait):
+    waitTime = 0
+    startedAt = time.time()
+    isRunning = False
+    _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
+    while isRunning is False and waitTime < int(maxWait):
+        isRunning = False
+        try:
+            pingResp = _fusion_api(apiHost, 'system/ping')
+        except:
+            _warn('ping '+apiHost+' failed due to '+str(sys.exc_info()[0])+'! Check status of Fusion and retry')
+            pingResp = 'error'
+
+        if pingResp == 'pong':
+            isRunning = True
+            break
+
+        if isRunning is False and int(maxWait) >= 10:
+            time.sleep(10)
+            waitTime = round(time.time() - startedAt)
+            _status('Waited %d seconds so far to verify Fusion API is running on %s.' % (waitTime, apiHost))
+
+    return isRunning
+
+def _lookup_emr_job_flow_id(emrApi, emrCluster):
+    sstk_cfg = _get_config()
+    job_flow_id = None
+    if sstk_cfg.has_key('emr'):
+        emr = sstk_cfg['emr']
+        if emr.has_key(emrCluster):
+            clust = emr[emrCluster]
+            if clust.has_key('job_flow_id'):
+                job_flow_id = clust['job_flow_id']
+
+    if job_flow_id is None:
+        list = emrApi.list_clusters()
+        if list is not None:
+            for csl in list.clusters:
+                if csl.name == emrCluster:
+                    job_flow_id = csl.id
+        if job_flow_id is not None:
+            if sstk_cfg.has_key('emr') is False:
+                sstk_cfg['emr'] = {}
+            if sstk_cfg['emr'].has_key(emrCluster) is False:
+                sstk_cfg['emr'][emrCluster] = {}
+            sstk_cfg['emr'][emrCluster]['job_flow_id'] = job_flow_id
+            _save_config()
+
+    if job_flow_id is None:
+        _fatal('Cannot find job flow ID for EMR cluster named '+emrCluster)
+
+    return job_flow_id
 
 
 # -----------------------------------------------------------------------------
@@ -1717,6 +1848,9 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
     setup_demo(demoCluster)
     
 def setup_demo(cluster):
+    """
+    Setup the SolrCloud demo on an already provisioned cluster, i.e. the instances you want to run the demo on have already been provisioned.
+    """
     hosts = _lookup_hosts(cluster)
     numHosts = len(hosts)
     numZkHosts = 3 if numHosts >= 3 else 1
@@ -2562,19 +2696,19 @@ def _fusion_api(host, apiEndpoint, method='GET', json=None):
 
     return resp
 
-
-def fusion_nodes(cluster):
-    hosts = _lookup_hosts(cluster)
-    _fusion_api(hosts[0], 'nodes/hosts')
-
 def fusion_new_search_cluster(cluster, name):
-    # just use curl for now
+    """
+    Creates a new search cluster in Fusion with the specified name using the zkHost of the provided cluster.
+    """
     hosts = _lookup_hosts(cluster)
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     createClusterJson = '{"id":"'+name+'", "connectString":"'+zkHost+'", "cloud":true}'
     _fusion_api(hosts[0], 'searchCluster', 'POST', createClusterJson)
 
 def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
+    """
+    Creates a new collection in Fusion.
+    """
     hosts = _lookup_hosts(cluster)
     numNodes = _num_solr_nodes_per_host(cluster)
     nodes = len(hosts) * numNodes
@@ -2774,16 +2908,6 @@ def fusion_stop(cluster):
                 run('nohup '+fusionBin+'/fusion stop > /dev/null 2>&1 &', pty=False)
                 _status('Stopped Fusion services on '+host)
 
-
-def fusion_endpoints(cluster,n,coll):
-    str = ''
-    hosts = _lookup_hosts(cluster)
-    for host in hosts:
-        if len(str) > 0:
-            str += ','
-        str += ('http://%s:8765/lucid/api/v1/index-pipelines/conn_solr/collections/%s/index' % (host, coll))
-    print(str)
-
 def fusion_status(cluster):
     """
     Get status information about a Fusion cluster (as well as the underlying SolrCloud cluster)
@@ -2795,7 +2919,7 @@ def fusion_status(cluster):
             run(fusionHome+'/bin/fusion status')
     cluster_status(cluster)
 
-def fusion_setup(cluster,vers='2.1'):
+def fusion_setup(cluster,vers='2.1.0'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
@@ -2803,35 +2927,44 @@ def fusion_setup(cluster,vers='2.1'):
     hosts = _cluster_hosts(cloud, cluster)
 
     fusionHome = _env(cluster, 'fusion_home')
+
+    fusionInstalled = False
+
     remoteFusionFile = 'fusion-'+vers+'.tar.gz'
-    fusionS3Url = 'https://s3.amazonaws.com/download.lucidworks.com/'+remoteFusionFile
+    fusionS3Url = "https://s3.amazonaws.com/lucidworks-apollo-beta/"+remoteFusionFile
 
     with settings(host_string=hosts[0]), hide('output'):
-        host = hosts[0]
-        _status('Downloading the Fusion distribution bundle ...')
-        run('wget '+fusionS3Url)
-        if len(hosts) > 1:
-            _status('Copying Fusion to '+str(len(hosts))+' additional nodes.')
-            for h in range(1,len(hosts)):
-                host = hosts[h]
-                run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteFusionFile, ssh_user, host, '.'))
+        if _fab_exists(fusionHome):
+            _info('Fusion already installed at '+fusionHome+'. Skipping download ...')
+            fusionInstalled = True
+        else:
+            host = hosts[0]
+            _status('Downloading the Fusion distribution bundle ...')
+            run('wget '+fusionS3Url)
+            if len(hosts) > 1:
+                _status('Copying Fusion to '+str(len(hosts))+' additional nodes.')
+                for h in range(1,len(hosts)):
+                    host = hosts[h]
+                    run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteFusionFile, ssh_user, host, '.'))
 
-    for host in hosts:
-        with settings(host_string=host), hide('output'):
-            run('mv fusion fusion_old_`date +"%Y%m%d_%H%M"` || true')
-            run('tar zxf '+remoteFusionFile)
+    if fusionInstalled is False:
+        for host in hosts:
+            with settings(host_string=host), hide('output'):
+                run('mv fusion fusion_old_`date +"%Y%m%d_%H%M"` || true')
+                run('tar zxf '+remoteFusionFile)
 
     _info('\n\nFusion installed on %d hosts' % len(hosts))
 
-def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='1.4.0'):
+def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.1.0'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
-    new_solrcloud(cluster,n=n,instance_type=instance_type)
+    new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True)
+    deploy_config(cluster,'data_driven_schema_configs','cloud')
     fusion_setup(cluster,fusionVers)
-    fusion_start(cluster,fusion=n)
+    fusion_start(cluster,api=n)
 
-def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusionVers=None,overwriteExisting=False):
+def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusionVers=None,overwriteExistingConfig=False):
     """
     Downloads Solr, ZooKeeper, and optionally Fusion and then builds a local cluster.
     """
@@ -2841,8 +2974,8 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
         sstkCfg['clusters'] = {}
 
     if sstkCfg['clusters'].has_key(cluster):
-        if bool(overwriteExisting) is False:
-            _fatal('Cluster '+cluster+' already defined in ~/.sstk! Please choose another cluster name to setup on local or pass overwriteExisting=True to overwrite this cluster config.')
+        if bool(overwriteExistingConfig) is False:
+            _fatal('Cluster '+cluster+' already defined in ~/.sstk! Please choose another cluster name to setup on local or pass overwriteExistingConfig=True to overwrite this cluster config.')
 
     localTip = os.path.expanduser(tip)
     if os.path.isdir(localTip) is False:
@@ -2882,10 +3015,10 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
         fusionTip = ('%s/fusion' % (localTip))
         if os.path.isdir(fusionTip) is False:
             fusionTgz = 'fusion-'+fusionVers+'.tar.gz'
-            fusionDownloadUrl = 'https://s3.amazonaws.com/download.lucidworks.com/'+fusionTgz
+            fusionDownloadUrl = 'https://s3.amazonaws.com/lucidworks-apollo-beta/'+fusionTgz
             fusionLocalTgz = localTip+'/'+fusionTgz
             if os.path.isfile(fusionLocalTgz) is False:
-                _status('Downloading Fusion '+fusionVers)
+                _status('Downloading Fusion '+fusionVers+' from: '+fusionDownloadUrl+' ... Please be patient as this can take a while ...')
                 _urlretrieve(fusionDownloadUrl, fusionLocalTgz)
             _status('Extracting '+fusionTgz)
             local('tar zxf %s -C %s' % (fusionLocalTgz, localTip))
@@ -2919,7 +3052,11 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
         fusion_start(cluster)
 
-def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=480):
+def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
+    """
+    Provisions a new Elastic MapReduce cluster.
+    """
+
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
@@ -2931,6 +3068,9 @@ def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
 
     emr = boto.emr.connect_to_region(region)
 
+    # NOTE: since we're provisioning expensive resources here, I'm not going to try to be robust and catch errors
+    # and retry as I don't want false positives to lead to multiple clusters being provisioned without the user
+    # realizing what's happened
     job_flow_id = emr.run_jobflow(cluster,
                     log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
                     availability_zone=availability_zone,
@@ -2996,12 +3136,13 @@ def emr_new_cluster(cluster, region='us-east-1', num='3', keep_alive=True, slave
 
 
 def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-east-1'):
+    """
+    Schedules a Pig job in the specified EMR cluster to download a dataset from S3 into HDFS.
+    """
 
     # lookup the job flow ID of the cluster
-    sstk_cfg = _get_config()
-    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
-
     emr = boto.emr.connect_to_region(region)
+    job_flow_id = _lookup_emr_job_flow_id(emr, emrCluster)
 
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
@@ -3020,17 +3161,18 @@ def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_
 
 
 def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1'):
+    """
+    Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Solr directly.
+    """
 
     # lookup the job flow ID of the cluster
-    sstk_cfg = _get_config()
-    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
+    emr = boto.emr.connect_to_region(region)
+    job_flow_id = _lookup_emr_job_flow_id(emr, emrCluster)
 
     zkHost = _read_cloud_env(solrCluster)['ZK_HOST']
 
     batchSize = int(batch_size)
     numReducers = int(reducers)
-
-    emr = boto.emr.connect_to_region(region)
 
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
@@ -3045,19 +3187,20 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
                '-p','zkHost='+zkHost]
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
-
     emr.add_jobflow_steps(job_flow_id, [pigStep])
 
 def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None):
+    """
+    Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Fusion.
+    """
 
     # lookup the job flow ID of the cluster
-    sstk_cfg = _get_config()
-    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
+    emr = boto.emr.connect_to_region(region)
+    job_flow_id = _lookup_emr_job_flow_id(emr, emrCluster)
+    _status('Adding Fusion indexing step to job flow: '+job_flow_id)
 
     batchSize = int(batch_size)
     numReducers = int(reducers)
-
-    emr = boto.emr.connect_to_region(region)
 
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
@@ -3070,14 +3213,13 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
     if pipeline is None:
         pipeline = collection+'-default'
 
-    # TODO: verify the proxy endpoint as you build up the list
     fusionEndpoint = ''
     for host in hosts:
         if len(fusionEndpoint) > 0:
             fusionEndpoint += ','
-        fusionEndpoint += 'http://'+host+':8765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
-        fusionEndpoint += ',http://'+host+':9765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
-        #fusionEndpoint += 'http://'+host+':8764/api/apollo/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+        #fusionEndpoint += 'http://'+host+':8765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+        #fusionEndpoint += ',http://'+host+':9765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+        fusionEndpoint += 'http://'+host+':8764/api/apollo/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
 
     pigArgs = ['-p','INPUT='+input,
                '-p','REDUCERS='+str(numReducers),
@@ -3089,13 +3231,32 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
                '-p','SSTK_JAR=s3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar']
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
-
-    emr.add_jobflow_steps(job_flow_id, [pigStep])
+    try:
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
+    except socket.gaierror as se:
+        _error('Call to add_jobflow_steps for job flow '+job_flow_id+' failed due to: '+str(se)+'! Will retry in 10 seconds ...')
+        time.sleep(10)
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
 
     return stepName
 
 
-def fusion_perf_test(cluster, n=3, instance_type='r3.xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False):
+    """
+    Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
+
+    Arg Usage:
+        cluster: Name of the Fusion cluster to create
+        n: Number of nodes in the cluster, default is 3
+        keepRunning: Set to True to keep the cluster running after the test completes, default is False (provisioned nodes will be terminated at the end of this test)
+        instance_type: EC2 instance type to provision, only r3.xlarge and r3.2xlarge instances are supported, default is r3.2xlarge
+        placement_group: Placement group for provisioned instances, default is benchmarking (you must create this if it doesn't exist)
+        region: The region where you want to provision instances; default is us-east-1 (Virginia data center)
+        maxWaitSecs: Max number of seconds to wait for the indexing job to complete, default is 2700
+        yjpPath: Path to the YourKit profiler on the remote nodes if you want to enable remote profiling in Solr or Fusion
+        yjpSolr: Enable remote profiling on the Solr nodes
+        yjpFusion: Enable remote profiling on the Fusion API services
+    """
 
     yjp_path_solr = None
     yjp_path_fusion = None
@@ -3106,15 +3267,35 @@ def fusion_perf_test(cluster, n=3, instance_type='r3.xlarge', placement_group='b
             yjp_path_fusion= yjpPath
 
     solrJavaMemOpts = None
+    apiJavaMem = None
     if instance_type == 'r3.xlarge':
         solrJavaMemOpts = '-Xms6g -Xmx6g'
+        apiJavaMem = '3g'
+    elif instance_type == 'r3.2xlarge':
+        solrJavaMemOpts = '-Xms8g -Xmx8g'
+        apiJavaMem = '4g'
 
-    new_solrcloud(cluster, n=n, zkn=min(3,n), instance_type=instance_type, placement_group=placement_group, yjp_path=yjp_path_solr, auto_confirm=True, solrJavaMemOpts=solrJavaMemOpts)
+    hvmAmiId = _env(cluster, 'AWS_HVM_AMI_ID')
+
+    new_solrcloud(cluster,
+                  n=n,
+                  zkn=min(3,n),
+                  ami=hvmAmiId,
+                  instance_type=instance_type,
+                  placement_group=placement_group,
+                  yjp_path=yjp_path_solr,
+                  auto_confirm=True,
+                  solrJavaMemOpts=solrJavaMemOpts)
+    _status('SolrCloud cluster provisioned ... deploying the data_driven_schema_configs config directory to ZK as name: perf')
     deploy_config(cluster,'data_driven_schema_configs','perf')
-    fusion_start(cluster,api=n,connectors=1,ui=1,yjp_path=yjp_path_fusion,apiJavaMem='3g')
+    _status('Starting Fusion services across cluster ...')
+    fusion_start(cluster,api=n,connectors=1,ui=1,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
 
     hosts = _lookup_hosts(cluster)
-    _wait_to_see_fusion_api_up(hosts[0], 120)
+
+    # make sure the proxy / UI service is up before making changes with the API
+    _wait_to_see_fusion_proxy_up(hosts[0], 60)
+    _status('Fusion proxy / UI service is up, commencing with post-startup configuration steps ...')
 
     # set the initial password for the new Fusion cluster
     fusionPasswd = '{"password":"password123"}'
@@ -3196,22 +3377,22 @@ def fusion_perf_test(cluster, n=3, instance_type='r3.xlarge', placement_group='b
 }"""
     _fusion_api(hosts[0], 'index-pipelines', 'POST', perfJsPipelineDef)
 
-    _info("http://"+hosts[0]+":8764")
-
     # raise the buffer size for high-volume indexing into Solr
     searchCluster = _fusion_api(hosts[0], 'searchCluster/default')
     sc = json.loads(searchCluster)
     sc['bufferSize'] = '500'
     _fusion_api(hosts[0], 'searchCluster/default', 'PUT', json.dumps(sc))
 
-    emrCluster = cluster+'EMR'
-    emr_new_cluster(emrCluster,region=region)
+    _info("Fusion configuration complete. Visit our nifty UI at: http://"+hosts[0]+":8764")
 
-    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region)
+    emrCluster = cluster+'EMR'
+    _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
+    emr_new_cluster(emrCluster,region=region)
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
 
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
-    _info('job flow is '+job_flow_id)
+    _info('EMR job flow is '+job_flow_id)
 
     # wait up to 30 minutes for the indexing job to complete
     emr = boto.emr.connect_to_region(region)
@@ -3232,38 +3413,33 @@ def fusion_perf_test(cluster, n=3, instance_type='r3.xlarge', placement_group='b
         throughput = _estimate_indexing_throughput(cluster, 'perf')
         _info('Achieved '+(throughput)+' docs per second')
 
-    #emr.terminate_jobflow(job_flow_id)
-
-def _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=1800):
-    isDone = False
-    waitTime = 0
-    startedAt = time.time()
-    maxWait = int(maxWaitSecs)
-    loops = 0
-    stepState = 'UNKNOWN'
-    _status('Waiting up to %d seconds to see step %s complete for job flow %s' % (maxWait, stepName, job_flow_id))
-    while isDone is False and waitTime < maxWait:
-        stepState = emr.describe_step(job_flow_id, stepId).status.state
-        if stepState != 'RUNNING' and stepState != 'STARTING' and stepState != 'PENDING':
-            isDone = True
-            break
-
-        time.sleep(30)
-        waitTime = round(time.time() - startedAt)
-        if loops > 0 and loops % 2 == 0:
-            _status('Waited %d seconds so far for step %s to complete ... last state was %s' % (waitTime, stepName, stepState))
-
-        loops += 1
-
-    if isDone:
-        _info('Step %s %s in ~%d seconds' % (stepName, stepState, waitTime))
+    if keepRunning:
+        _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
     else:
-        _error('Step %s failed to complete within %d seconds!' % (stepName, maxWait))
+        kill(cluster)
+        # terminate the EMR cluster when we're done
+        terminate_jobflow(emrCluster, region)
 
-    return stepState
-
+def terminate_jobflow(emrCluster, region='us-east-1'):
+    """
+    Terminates the specified Elastic MapReduce cluster and removes it from your local ~/.sstk config file
+    emrCluster: Name of the cluster to terminate
+    region: The region where the cluster is running, defaults to us-east-1
+    """
+    emr = boto.emr.connect_to_region(region)
+    job_flow_id = _lookup_emr_job_flow_id(emr, emrCluster)
+    emr.set_termination_protection(job_flow_id, False)
+    emr.terminate_jobflow(job_flow_id)
+    sstk_cfg = _get_config()
+    if sstk_cfg.has_key('emr'):
+        emr = sstk_cfg['emr']
+        emr.pop(emrCluster, None)
+        _save_config()
 
 def fusion_api_up(cluster):
+    """
+    Test to see if the Fusion API service is running on each host in the cluster.
+    """
     hosts = _lookup_hosts(cluster)
     for h in hosts:
         isRunning = _wait_to_see_fusion_api_up(h, 1)
@@ -3272,51 +3448,11 @@ def fusion_api_up(cluster):
         else:
             _info('Fusion API service is NOT responding on '+h)
 
-def _wait_to_see_fusion_api_up(apiHost, maxWait):
-    waitTime = 0
-    startedAt = time.time()
-    isRunning = False
-    _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
-    while isRunning is False and waitTime < int(maxWait):
-        isRunning = False
-        try:
-            pingResp = _fusion_api(apiHost, 'system/ping')
-        except:
-            _warn('ping '+apiHost+' failed due to '+str(sys.exc_info()[0])+'! Check status of Fusion and retry')
-            pingResp = 'error'
-
-        _status(pingResp)
-
-        if pingResp == 'pong':
-            isRunning = True
-            break
-
-        if isRunning is False and int(maxWait) >= 10:
-            time.sleep(10)
-            waitTime = round(time.time() - startedAt)
-            _status('Waited %d seconds so far to verify Fusion API is running on %s.' % (waitTime, hosts[0]))
-
-    return isRunning
 
 def estimate_indexing_throughput(cluster, collection):
+    """
+        Estimates the indexing throughput (number of docs per second) after running an indexing job.
+    """
     tp = _estimate_indexing_throughput(cluster, collection)
     print('throughput: '+str(tp))
 
-def _estimate_indexing_throughput(cluster, collection):
-    hosts = _lookup_hosts(cluster)
-    timestampField = 'indexed_at_tdt'
-    solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
-    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' ASC'})
-    if results.hits <= 0:
-        _error('No results found in Solr!')
-
-    earliestDoc = results.docs[0][timestampField]
-    earliestTime = dateutil.parser.parse(earliestDoc)
-    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' DESC'})
-    latestTime = dateutil.parser.parse(results.docs[0][timestampField])
-    duration = (latestTime-earliestTime).total_seconds()
-    tp = 0
-    if duration > 0:
-        tp = results.hits / duration
-
-    return tp
