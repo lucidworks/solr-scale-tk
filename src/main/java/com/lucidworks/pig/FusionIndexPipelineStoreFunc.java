@@ -75,12 +75,15 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
 
   protected FusionPipelineClient pipelineClient;
 
-  public FusionIndexPipelineStoreFunc(String endpoints, String batchSize, String fusionUser, String fusionPass, String fusionRealm) throws SolrServerException, IOException {
+  protected boolean fusionAuthEnabled = true;
+
+  public FusionIndexPipelineStoreFunc(String endpoints, String batchSize, String fusionAuthEnabled, String fusionUser, String fusionPass, String fusionRealm) throws SolrServerException, IOException {
     this.fusionUser = fusionUser;
     this.fusionPass = fusionPass;
     this.fusionRealm = fusionRealm;
     this.endpoints = endpoints;
     this.batchSize = Integer.parseInt(batchSize);
+    this.fusionAuthEnabled = "true".equals(fusionAuthEnabled);
   }
 
   public void putNext(Tuple input) throws IOException {
@@ -476,7 +479,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   @Override
   public void prepareToWrite(RecordWriter writer) throws IOException {
     try {
-      pipelineClient = new FusionPipelineClient(endpoints, fusionUser, fusionPass, fusionRealm);
+      pipelineClient = fusionAuthEnabled ? new FusionPipelineClient(endpoints, fusionUser, fusionPass, fusionRealm) : new FusionPipelineClient(endpoints);
     } catch (Exception e) {
       log.error("Unable to connect to: " + endpoints);
       throw new IOException("Unable to connect to: " + endpoints, e);

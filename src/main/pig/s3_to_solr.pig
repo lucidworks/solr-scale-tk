@@ -1,5 +1,6 @@
 -- REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-1.2.0-SNAPSHOT-rc2-0.jar';
-REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-2.0.1-0-0-hadoop2.jar';
+-- REGISTER 's3://solr-scale-tk/pig/hadoop-lws-job-2.0.1-0-0-hadoop2.jar';
+REGISTER '$JOB_JAR';
 
 set solr.zkhost '$zkHost';
 set solr.collection '$collection';

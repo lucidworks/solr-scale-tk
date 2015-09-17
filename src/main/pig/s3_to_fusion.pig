@@ -51,4 +51,4 @@ to_sort = foreach data generate id,
 
 to_solr = order to_sort by id ASC parallel $REDUCERS;
 store to_solr into 'Fusion' using
-  com.lucidworks.pig.FusionIndexPipelineStoreFunc('$FUSION_ENDPOINT','$FUSION_BATCH_SIZE','$FUSION_USER','$FUSION_PASS','$FUSION_REALM');
+  com.lucidworks.pig.FusionIndexPipelineStoreFunc('$FUSION_ENDPOINT','$FUSION_BATCH_SIZE','$FUSION_AUTH_ENABLED','$FUSION_USER','$FUSION_PASS','$FUSION_REALM');

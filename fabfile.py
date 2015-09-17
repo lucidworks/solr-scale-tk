@@ -462,7 +462,7 @@ SOLR_HOST=%s
 # (recommended in production environments)
 ENABLE_REMOTE_JMX_OPTS="true"
 
-SOLR_OPTS="$SOLR_OPTS -Dsolr.autoCommit.maxTime=30000 -Dsolr.autoSoftCommit.maxTime=15000"
+SOLR_OPTS="$SOLR_OPTS -Dsolr.autoCommit.maxTime=30000 -Dsolr.autoSoftCommit.maxTime=3000"
 
 ''' % (remoteSolrJavaHome, solrJavaMemOpts, zkHost, solrHost))
 
@@ -3457,6 +3457,15 @@ def estimate_indexing_throughput(cluster, collection):
     tp = _estimate_indexing_throughput(cluster, collection)
     print('throughput: '+str(tp))
 
+def clear_collection(cluster,collection):
+    hosts = _lookup_hosts(cluster)
+    clearUrl = ("http://%s:8984/solr/%s/update?commit=true" % (hosts[0], collection))
+    req = urllib2.Request(clearUrl)
+    req.add_header('Content-Type', 'application/xml')
+    try:
+        urllib2.urlopen(req, '<delete><query>*:*</query></delete>')
+    except urllib2.HTTPError as e:
+        _error('POST to '+clearUrl+' failed due to: '+str(e)+'\n'+e.read())
 
 
 
