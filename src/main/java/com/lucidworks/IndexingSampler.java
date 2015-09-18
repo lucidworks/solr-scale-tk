@@ -13,6 +13,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.lucidworks.client.FusionPipelineClient;
 import org.apache.http.NoHttpResponseException;
 import org.apache.http.conn.ConnectTimeoutException;
 import org.apache.jmeter.protocol.java.sampler.AbstractJavaSamplerClient;
@@ -55,7 +56,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   //protected Random rand;
   protected FieldSpec[] fields;
   protected boolean commitAtEnd = true;
-  protected HttpIndexPipelineClient indexPipelineClient;
+  protected FusionPipelineClient indexPipelineClient;
 
   private static final MetricRegistry metrics = new MetricRegistry();
   private static final Timer sendBatchToSolrTimer = metrics.timer("sendBatchToSolr");
@@ -203,7 +204,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       // add on the collection part
       fusionIndexPipelineEndpoint = fusionIndexPipelineEndpoint.replace("${collection}", collection);
       try {
-        indexPipelineClient = new HttpIndexPipelineClient(fusionIndexPipelineEndpoint);
+        indexPipelineClient = new FusionPipelineClient(fusionIndexPipelineEndpoint);
       } catch (Exception exc) {
         throw new RuntimeException(exc);
       }
@@ -343,7 +344,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerThread, int batchSize) throws Exception {
     int totalDocs = 0;
-    JSONArray batch = new JSONArray();
+    List batch = new ArrayList();
 
     Random rand = rands.get();
     Timer.Context constructBatchTimerCtxt = null;
@@ -354,7 +355,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       }
 
       String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
-      JSONObject nextDoc = buildJsonInputDocument(docId, rand);
+      Map<String,Object> nextDoc = buildJsonInputDocument(docId, rand);
       batch.add(nextDoc);
 
       if (batch.size() >= batchSize) {
@@ -377,17 +378,19 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return totalDocs;
   }
 
-  public JSONObject buildJsonInputDocument(String docId, Random rand) {
-    JSONObject doc = new JSONObject();
+  public Map<String,Object> buildJsonInputDocument(String docId, Random rand) {
+    Map<String,Object> doc = new HashMap<String,Object>();
     for (FieldSpec f : fields) {
       if (f.name.endsWith("_ss")) {
         int numVals = rand.nextInt(20) + 1;
+        List vals = new ArrayList();
         for (int n = 0; n < numVals; n++) {
           Object val = f.next(rand);
           if (val != null) {
-            doc.put(f.name, val);
+            vals.add(val);
           }
         }
+        doc.put(f.name, vals);
       } else {
         Object val = f.next(rand);
         if (val != null) {
@@ -399,6 +402,9 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         }
       }
     }
+
+    doc.put("indexed_at_tdt", ISO_8601_DATE_FMT.format(new Date()));
+
     return doc;
   }
 
@@ -522,11 +528,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return totalDocs;
   }
 
-  protected int sendJsonBatch(JSONArray batch, int waitBeforeRetry, int maxRetries) throws Exception {
+  protected int sendJsonBatch(List batch, int waitBeforeRetry, int maxRetries) throws Exception {
     int sent = 0;
     final Timer.Context sendTimerCtxt = sendBatchToSolrTimer.time();
     try {
-      indexPipelineClient.postDocsToPipeline(batch);
+      indexPipelineClient.postBatchToPipeline(batch);
       sent = batch.size();
     } catch (Exception exc) {
 

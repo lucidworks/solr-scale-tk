@@ -74,9 +74,20 @@
                 <excludes>
                   <exclude>org.apache.hadoop:*</exclude>
                   <exclude>org.apache.pig:*</exclude>
+                    <exclude>org.bouncycastle:*</exclude>
+                    <exclude>org.apache.jmeter:*</exclude>
+                    <exclude>org.apache.tika:*</exclude>
+                    <exclude>org.objectweb.asm:*</exclude>
+                    <exclude>asm:*</exclude>
                 </excludes>
               </artifactSet>
               <relocations>
+
+                  <relocation>
+                      <pattern>org.xml.sax</pattern>
+                      <shadedPattern>shaded.xml.sax</shadedPattern>
+                  </relocation>
+
                 <relocation>
                   <pattern>org.apache.http</pattern>
                   <shadedPattern>shaded.apache.http</shadedPattern>

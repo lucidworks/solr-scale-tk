@@ -43,7 +43,7 @@ data = load '$INPUT' using PigStorage() as (id: chararray,
   text3_en: chararray,
   random_bucket: float);
 
-to_sort = foreach data generate id,
+to_sort = foreach data generate CONCAT(id,(chararray)RANDOM()) as id,
   'integer1_i', integer1_i,
   'integer2_i', integer2_i,
   'long1_l', long1_l,
@@ -60,5 +60,6 @@ to_sort = foreach data generate id,
   'text1_en', text1_en,
   'text3_en', text3_en;
   
-to_solr = order to_sort by id ASC parallel $RED;
-store to_solr into 's3://solr-scale-tk/pig/output/foo' using com.lucidworks.hadoop.pig.SolrStoreFunc();
+-- to_solr = order to_sort by id ASC parallel $RED;
+-- store to_solr into 's3://solr-scale-tk/pig/output/foo' using com.lucidworks.hadoop.pig.SolrStoreFunc();
+store to_sort into 's3://solr-scale-tk/pig/output/foo' using com.lucidworks.hadoop.pig.SolrStoreFunc();
