@@ -43,7 +43,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
   }
 
-  private static final SimpleDateFormat ISO_8601_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.'S'Z'");
+  //private static final SimpleDateFormat ISO_8601_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.'S'Z'");
 
   // keeps track of how many tests are running this sampler and when there are
   // none, a final hard commit is sent.
@@ -74,6 +74,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     @Override
     protected Random initialValue() {
       return new Random(5150 + inits.incrementAndGet());
+    }
+  };
+
+  private static ThreadLocal<SimpleDateFormat> sdf = new ThreadLocal<SimpleDateFormat>() {
+    @Override
+    protected SimpleDateFormat initialValue() {
+      return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.'S'Z'");
     }
   };
 
@@ -305,6 +312,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       result.setSuccessful(true);
     } catch (Exception exc) {
       log.error("Indexing sampler failed due to: " + exc, exc);
+      exc.printStackTrace();
       result.setSuccessful(false);
       result.setErrorCount(1);
     }
@@ -379,6 +387,9 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   }
 
   public Map<String,Object> buildJsonInputDocument(String docId, Random rand) {
+
+    SimpleDateFormat df = sdf.get();
+
     Map<String,Object> doc = new HashMap<String,Object>();
     for (FieldSpec f : fields) {
       if (f.name.endsWith("_ss")) {
@@ -395,7 +406,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         Object val = f.next(rand);
         if (val != null) {
           if (val instanceof Date) {
-            doc.put(f.name, ISO_8601_DATE_FMT.format((Date) val));
+            doc.put(f.name, df.format((Date) val));
           } else {
             doc.put(f.name, val);
           }
@@ -403,7 +414,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       }
     }
 
-    doc.put("indexed_at_tdt", ISO_8601_DATE_FMT.format(new Date()));
+    doc.put("indexed_at_tdt", df.format(new Date()));
 
     return doc;
   }
