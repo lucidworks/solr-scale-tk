@@ -3457,15 +3457,32 @@ def estimate_indexing_throughput(cluster, collection):
     tp = _estimate_indexing_throughput(cluster, collection)
     print('throughput: '+str(tp))
 
-def clear_collection(cluster,collection):
+def clear_collection(cluster,collection,deleteByQuery='*:*'):
     hosts = _lookup_hosts(cluster)
     clearUrl = ("http://%s:8984/solr/%s/update?commit=true" % (hosts[0], collection))
     req = urllib2.Request(clearUrl)
     req.add_header('Content-Type', 'application/xml')
     try:
-        urllib2.urlopen(req, '<delete><query>*:*</query></delete>')
+        urllib2.urlopen(req, '<delete><query>'+deleteByQuery+'</query></delete>')
     except urllib2.HTTPError as e:
         _error('POST to '+clearUrl+' failed due to: '+str(e)+'\n'+e.read())
 
 
+def solr_indexing_throughput(url):
+    timestampField = 'indexed_at_tdt'
+    solr = pysolr.Solr(url, timeout=10)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' ASC'})
+    if results.hits <= 0:
+        _error('No results found in Solr!')
+
+    earliestDoc = results.docs[0][timestampField]
+    earliestTime = dateutil.parser.parse(earliestDoc)
+    results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' DESC'})
+    latestTime = dateutil.parser.parse(results.docs[0][timestampField])
+    duration = (latestTime-earliestTime).total_seconds()
+    tp = 0
+    if duration > 0:
+        tp = results.hits / duration
+
+    print('docs/sec: '+str(tp))
 
