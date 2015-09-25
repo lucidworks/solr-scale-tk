@@ -1286,7 +1286,10 @@ def new_ec2_instances(cluster,
     awsSecGroup = _env(cluster, 'AWS_SECURITY_GROUP')
     # launch the instances in EC2
     # Create placement group benchmarking if it doesn't exist
-    if not(placement_group in ec2.get_all_placement_groups()):
+    pgnamelist = []
+    for pgname in ec2.get_all_placement_groups():
+        pgnamelist.append(pgname.name)
+    if not(placement_group in pgnamelist):
         new_placement_group(ec2, placement_group)
 
     #Avoid no default VPC error by passing the subnet id and the security group id from the sstk config
@@ -3108,7 +3111,9 @@ def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave
     # NOTE: since we're provisioning expensive resources here, I'm not going to try to be robust and catch errors
     # and retry as I don't want false positives to lead to multiple clusters being provisioned without the user
     # realizing what's happened
-    job_flow_id = emr.run_jobflow(cluster,
+    #If no default VPC exists, pass the subnet id
+    if (defaultvpc_exists()):
+        job_flow_id = emr.run_jobflow(cluster,
                     log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
                     availability_zone=availability_zone,
                     master_instance_type='m3.xlarge',
@@ -3122,6 +3127,22 @@ def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave
                     action_on_failure='CONTINUE',
                     job_flow_role='EMR_EC2_DefaultRole',
                     service_role='EMR_DefaultRole')
+    else:
+        subnetid = _env(cluster, "subnetid")
+        dict_subnet = {"Instances.Ec2SubnetId":subnetid}
+        job_flow_id = emr.run_jobflow(cluster,
+                    log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
+                    master_instance_type='m3.xlarge',
+                    slave_instance_type=slave_instance_type,
+                    ec2_keyname=keyname,
+                    num_instances=int(num)+1,
+                    ami_version='3.6.0',
+                    keep_alive=keep_alive,
+                    steps=steps,
+                    enable_debugging=True,
+                    action_on_failure='CONTINUE',
+                    job_flow_role='EMR_EC2_DefaultRole',
+                    service_role='EMR_DefaultRole', api_params = dict_subnet)
 
     # This is needed to workaround a bug where failed steps cause the cluster to
     # shutdown prematurely (preventing diagnosis of the cause of the failure)
