@@ -22,6 +22,7 @@ import os.path
 import datetime
 import dateutil.parser
 import shutil
+import boto.vpc
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
 CLUSTER_TAG = 'cluster'
@@ -1284,7 +1285,13 @@ def new_ec2_instances(cluster,
 
     awsSecGroup = _env(cluster, 'AWS_SECURITY_GROUP')
     # launch the instances in EC2
-    rsrv = ec2.run_instances(ami,
+    # Create placement group benchmarking if it doesn't exist
+    if not(placement_group in ec2.get_all_placement_groups()):
+        new_placement_group(ec2, placement_group)
+
+    #Avoid no default VPC error by passing the subnet id and the security group id from the sstk config
+    if (defaultvpc_exists()):
+        rsrv = ec2.run_instances(ami,
                              min_count=num,
                              max_count=num,
                              instance_type=instance_type,
@@ -1294,7 +1301,21 @@ def new_ec2_instances(cluster,
                              monitoring_enabled=True,
                              placement=az,
                              placement_group=placement_group)
-
+    else:
+        subnetid = _env(cluster, "subnetid")
+        sgid = _env(cluster, "security_group_id")
+        rsrv = ec2.run_instances(ami,
+                             min_count=num,
+                             max_count=num,
+                             instance_type=instance_type,
+                             key_name=key,
+                             block_device_map=bdm,
+                             monitoring_enabled=True,
+                             placement=az,
+                             placement_group=placement_group,
+                             subnet_id = subnetid,
+                             security_group_ids=[sgid])
+    
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
     # add a tag to each instance so that we can filter many instances by our cluster tag
@@ -3052,6 +3073,21 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     if fusionTip is not None:
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
         fusion_start(cluster)
+
+def new_placement_group(cluster, name):
+    if cluster.create_placement_group(name):
+	    _info('New placement group ' + name + ' created')
+
+def defaultvpc_exists(region='us-east-1'):
+    vpc = boto.vpc.connect_to_region(region)
+    vpc.get_all_vpcs()
+    ret = False
+    for i in vpc.get_all_vpcs():
+	if i.is_default:
+		ret = True
+		break
+    _status("Default VPC exists:" + str(ret))
+    return ret
 
 def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
     """
