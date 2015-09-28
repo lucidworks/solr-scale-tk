@@ -3245,7 +3245,14 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
                '-p','zkHost='+zkHost]
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
-    emr.add_jobflow_steps(job_flow_id, [pigStep])
+    try:
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
+    except socket.gaierror as se:
+        _error('Call to add_jobflow_steps for job flow '+job_flow_id+' failed due to: '+str(se)+'! Will retry in 10 seconds ...')
+        time.sleep(10)
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
+
+    return stepName
 
 def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None):
     """
@@ -3446,8 +3453,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     emrCluster = cluster+'EMR'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
     emr_new_cluster(emrCluster,region=region)
+    #Fusion indexing step
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
-
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
     _info('EMR job flow is '+job_flow_id)
@@ -3469,7 +3476,29 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     # job completed ...
     if stepStatus == 'COMPLETED':
         throughput = _estimate_indexing_throughput(cluster, 'perf')
-        _info('Achieved %f docs per second', throughput)
+        _info('Achieved %f docs per second - fusion indexing step ' % throughput)
+
+    #Run just solr if flag is Y
+    #Solr indexing step
+    if confirm('do you want run indexing step with just Solr?'):
+        stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf', region=region, reducers='16')
+
+        steps = emr.list_steps(job_flow_id)
+        stepId = None
+        for s in steps.steps:
+            if s.name == stepName:
+                stepId = s.id
+                break
+
+        if stepId is None:
+            _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
+
+        stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
+
+        # job completed ...
+        if stepStatus == 'COMPLETED':
+            throughput = _estimate_indexing_throughput(cluster, 'perf')
+            _info('Achieved %f docs per second - solr Indexing step ' % throughput)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
