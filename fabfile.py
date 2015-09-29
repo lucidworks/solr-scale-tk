@@ -3305,8 +3305,26 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
 
     return stepName
 
+def _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster):
+    steps = emr.list_steps(job_flow_id)
+    stepId = None
+    for s in steps.steps:
+        if s.name == stepName:
+            stepId = s.id
+            break
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False):
+    if stepId is None:
+        _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
+
+    stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
+    return stepStatus
+
+def _print_step_metrics(cluster, collection):
+    throughput = _estimate_indexing_throughput(cluster, collection)
+    _info('Achieved %f docs per second' % throughput)
+
+
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3454,51 +3472,26 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
     emr_new_cluster(emrCluster,region=region)
     #Fusion indexing step
-    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
+
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
     _info('EMR job flow is '+job_flow_id)
 
     # wait up to 30 minutes for the indexing job to complete
     emr = boto.emr.connect_to_region(region)
-    steps = emr.list_steps(job_flow_id)
-    stepId = None
-    for s in steps.steps:
-        if s.name == stepName:
-            stepId = s.id
-            break
 
-    if stepId is None:
-        _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
-
-    stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
-
-    # job completed ...
-    if stepStatus == 'COMPLETED':
-        throughput = _estimate_indexing_throughput(cluster, 'perf')
-        _info('Achieved %f docs per second - fusion indexing step ' % throughput)
-
-    #Run just solr if flag is Y
-    #Solr indexing step
-    if confirm('do you want run indexing step with just Solr?'):
-        stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf', region=region, reducers='16')
-
-        steps = emr.list_steps(job_flow_id)
-        stepId = None
-        for s in steps.steps:
-            if s.name == stepName:
-                stepId = s.id
-                break
-
-        if stepId is None:
-            _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
-
-        stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
-
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
+    if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
-        if stepStatus == 'COMPLETED':
-            throughput = _estimate_indexing_throughput(cluster, 'perf')
-            _info('Achieved %f docs per second - solr Indexing step ' % throughput)
+        _print_step_metrics(cluster, 'perf')
+
+    #Solr indexing step
+    if index_solr_too:
+        fusion_new_collection(cluster,name='perf-solr',rf=2,shards=n,conf='perf')
+        stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf-solr', region=region, reducers='16')
+        if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
+            # job completed ...
+            _print_step_metrics(cluster, 'perf-solr')
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
