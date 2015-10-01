@@ -186,11 +186,15 @@ class _LocalProvider:
         return
 
 # Get a handle to a Cloud Provider API (or mock for local mode)
-def _provider_api():
+def _provider_api(cluster ='ec2'):
     sstk_cfg = _get_config()
-
-    if sstk_cfg.has_key('provider') is False:
-        sstk_cfg['provider'] = 'ec2' # default
+    if sstk_cfg.has_key('clusters') and sstk_cfg['clusters'].has_key(cluster):
+        if sstk_cfg['clusters'][cluster].has_key('provider') is False:
+            sstk_cfg['provider'] = 'ec2' # default
+        else:
+            sstk_cfg['provider'] = sstk_cfg['clusters'][cluster]['provider']
+    else:
+        sstk_cfg['provider'] = 'ec2'
 
     provider = sstk_cfg['provider']
     if provider == 'ec2':
@@ -520,7 +524,7 @@ def _lookup_hosts(cluster, verify_ssh=False):
 
     if hosts is None:
         # hosts not found in the local config
-        cloud = _provider_api()
+        cloud = _provider_api(cluster)
         hosts = _cluster_hosts(cloud, cluster)
         cloud.close()
 
@@ -1223,7 +1227,7 @@ def new_ec2_instances(cluster,
         The m3 instance types are usually better and less expensive
         as Amazon is phasing out the m1 types.''')    
 
-    ec2 = _provider_api()
+    ec2 = _provider_api(cluster)
     num = int(n)
 
     _status('Going to launch %d new EC2 %s instances using AMI %s' % (num, instance_type, ami))
@@ -1403,7 +1407,7 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solr
 
     _info('Setting up %d SolrCloud nodes on cluster: %s' % (totalNodes, cluster))
 
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
 
     # setup/start zookeeper
     zkHosts = []
@@ -1629,7 +1633,7 @@ def setup_zk_ensemble(cluster):
     """
     Configures, starts, and checks the health of a ZooKeeper ensemble in an existing cluster.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     _verify_ssh_connectivity(hosts)    
     zkHosts = _zk_ensemble(cluster, hosts)
@@ -1640,7 +1644,7 @@ def kill(cluster):
     """
     Terminate all running nodes of the specified cluster.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     taggedInstances = _find_instances_in_cluster(cloud, cluster)
     instance_ids = taggedInstances.keys()
     if confirm('Found %d instances to terminate, continue? ' % len(instance_ids)):
@@ -1662,7 +1666,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if zk is None:
         zkHost = '*local*'
     else:
-        cloud = _provider_api()
+        cloud = _provider_api(cluster)
         zkHosts = _get_zk_hosts(cloud, zk)
         zkHost = zk + ': ' + (','.join(zkHosts))
         cloud.close()
@@ -1922,7 +1926,7 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
             _fatal('JAR %s not found on LOCAL FS!' % jarFile)
     
     # get list of hosts and verify SSH connectivity
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     
     # ability to patch a single server only
@@ -2023,7 +2027,7 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
     if dryRun:
         _warn('Doing a dry-run only.')
 
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     backupDirOnRemoteHost = '../backups/'+collection
     hosts = _cluster_hosts(cloud, cluster)
     numNodes = _num_solr_nodes_per_host(cluster)
@@ -2137,7 +2141,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     """
     Restores an index from backup into an existing collection with the same number of shards
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     
     needsDownload = True if int(alreadyDownloaded) == 0 else False
@@ -2412,7 +2416,7 @@ def restart_solr(cluster,wait=0,pauseBeforeRestart=0):
     default behavior is to poll the node status until it is up with a max
     wait of 180 seconds.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     _rolling_restart_solr(cloud, cluster, None, wait, None, pauseBeforeRestart)
     cloud.close()
 
@@ -2487,7 +2491,7 @@ def setup_instance_stores(cluster,numInstanceStores=1):
     """
     Setup instance stores on an existing cluster; this approach is tightly coupled to the EC2 way.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     if _verify_ssh_connectivity(hosts, 180) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
@@ -2499,7 +2503,7 @@ def reload_collection(cluster,collection):
     """
     Reload a collection using the Collections API; run the healthcheck after reloading.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     urllib2.urlopen('http://%s:8984/solr/admin/collections?action=RELOAD&name=%s' % (hosts[0], collection))
     time.sleep(10)        
@@ -2948,7 +2952,7 @@ def fusion_setup(cluster,vers='2.1.0'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
 
     fusionHome = _env(cluster, 'fusion_home')
@@ -3485,7 +3489,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, 'perf_js')
-    print index_solr_too
+
     #Solr indexing step
     if index_solr_too:
         fusion_new_collection(cluster,name='perf-solr',rf=2,shards=n,conf='perf')
