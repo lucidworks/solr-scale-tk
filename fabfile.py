@@ -3016,7 +3016,8 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     zkTip = ('%s/zookeeper-%s' % (localTip, zkVers))
     if os.path.isdir(zkTip) is False:
         zookeeperTgz = 'zookeeper-'+zkVers+'.tar.gz'
-        zookeeperDownloadUrl = 'http://www.eng.lsu.edu/mirrors/apache/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
+        #zookeeperDownloadUrl = 'http://www.eng.lsu.edu/mirrors/apache/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
+	zookeeperDownloadUrl = 'http://www.apache.org/dist/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
         zookeeperLocalTgz = localTip+'/'+zookeeperTgz
         if os.path.isfile(zookeeperLocalTgz) is False:
             _status('Downloading ZooKeeper '+zkVers)
@@ -3062,7 +3063,7 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     cfg['zk_data_dir'] = '${zk_home}/data'
     cfg['sstk_cloud_dir'] = cloudDir
     cfg['solr_tip'] = solrTip
-    cfg['ssh_keyfile_on_local'] = ''
+    cfg['ssh_keyfile_path_on_local'] = ''
 
     if fusionTip is not None:
         cfg['fusion_home'] = fusionTip
@@ -3480,11 +3481,11 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     # wait up to 30 minutes for the indexing job to complete
     emr = boto.emr.connect_to_region(region)
 
-    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf_js',collection='perf_js', region=region, reducers='16')
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
-        _print_step_metrics(cluster, 'perf')
-
+        _print_step_metrics(cluster, 'perf_js')
+    print index_solr_too
     #Solr indexing step
     if index_solr_too:
         fusion_new_collection(cluster,name='perf-solr',rf=2,shards=n,conf='perf')
