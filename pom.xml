@@ -84,11 +84,6 @@
               <relocations>
 
                   <relocation>
-                      <pattern>org.xml.sax</pattern>
-                      <shadedPattern>shaded.xml.sax</shadedPattern>
-                  </relocation>
-
-                <relocation>
                   <pattern>org.apache.http</pattern>
                   <shadedPattern>shaded.apache.http</shadedPattern>
                 </relocation>
@@ -211,6 +206,7 @@
         </exclusion>
       </exclusions>
     </dependency>
+      <!--
     <dependency>
       <groupId>com.sun.mail</groupId>
       <artifactId>javax.mail</artifactId>
@@ -221,6 +217,7 @@
       <artifactId>gimap</artifactId>
       <version>1.5.1</version>
     </dependency>
+    -->
     <dependency>
       <groupId>sdsu</groupId>
       <artifactId>java-lib</artifactId>

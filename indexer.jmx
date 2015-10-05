@@ -17,7 +17,7 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <stringProp name="LoopController.loops">1</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">5</stringProp>
+        <stringProp name="ThreadGroup.num_threads">8</stringProp>
         <stringProp name="ThreadGroup.ramp_time">1</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
@@ -41,12 +41,12 @@
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
                 <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">500</stringProp>
+                <stringProp name="Argument.value">100</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
                 <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">500000</stringProp>
+                <stringProp name="Argument.value">100000</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="THREAD_ID" elementType="Argument">
@@ -56,7 +56,7 @@
               </elementProp>
               <elementProp name="ID_PREFIX" elementType="Argument">
                 <stringProp name="Argument.name">ID_PREFIX</stringProp>
-                <stringProp name="Argument.value">id27</stringProp>
+                <stringProp name="Argument.value">id30</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
