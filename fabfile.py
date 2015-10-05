@@ -3329,6 +3329,19 @@ def _print_step_metrics(cluster, collection):
     _info('Achieved %f docs per second' % throughput)
 
 
+def gc_log_analysis_api(cluster):
+    hosts = _lookup_hosts(cluster)
+    _info("Starting gc log analysis")
+    for host in hosts:
+        with settings(host_string=host), hide('output', 'running'):
+            _info('Host: ' + host)
+            gcjarupload = put('./'+'lib/gc-log-analyzer-0.1-exe.jar',_env(cluster, 'sstk_cloud_dir'))
+            if gcjarupload.succeeded:
+                gclogfilename = run('ls fusion/var/log/api/ | grep gc | tail -1')
+                _info(run('java -jar ' + _env(cluster, 'sstk_cloud_dir') + '/gc-log-analyzer-0.1-exe.jar -log ' + 'fusion/var/log/api/' + gclogfilename + ' -javaVers 1.7' ))
+
+    _info("Gc log analysis complete")
+
 def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
@@ -3396,6 +3409,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         _error('POST to '+postToApiUrl+' failed due to: '+str(e)+'\n'+e.read())
     except urllib2.URLError as ue:
         _error('POST to '+postToApiUrl+' failed due to: '+str(ue))
+
 
     fusion_new_collection(cluster,name='perf',rf=2,shards=n,conf='perf')
     fusion_new_collection(cluster,name='perf_js',rf=2,shards=n,conf='perf')
@@ -3476,6 +3490,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     emrCluster = cluster+'EMR'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
     emr_new_cluster(emrCluster,region=region)
+
     #Fusion indexing step
 
     sstk_cfg = _get_config()
@@ -3485,10 +3500,10 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     # wait up to 30 minutes for the indexing job to complete
     emr = boto.emr.connect_to_region(region)
 
-    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf_js',collection='perf_js', region=region, reducers='16')
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection='perf', region=region, reducers='16')
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
-        _print_step_metrics(cluster, 'perf_js')
+        _print_step_metrics(cluster, 'perf')
 
     #Solr indexing step
     if index_solr_too:
@@ -3497,6 +3512,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
             # job completed ...
             _print_step_metrics(cluster, 'perf-solr')
+
+    #GC log analysis for fusion api service    _info("Starting gc log analysis")
+    gc_log_analysis_api(cluster)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
