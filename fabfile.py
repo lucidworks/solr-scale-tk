@@ -24,6 +24,8 @@ import datetime
 import dateutil.parser
 import shutil
 import socket
+import boto.vpc
+
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
 CLUSTER_TAG = 'cluster'
@@ -187,11 +189,15 @@ class _LocalProvider:
         return
 
 # Get a handle to a Cloud Provider API (or mock for local mode)
-def _provider_api():
+def _provider_api(cluster ='ec2'):
     sstk_cfg = _get_config()
-
-    if sstk_cfg.has_key('provider') is False:
-        sstk_cfg['provider'] = 'ec2' # default
+    if sstk_cfg.has_key('clusters') and sstk_cfg['clusters'].has_key(cluster):
+        if sstk_cfg['clusters'][cluster].has_key('provider') is False:
+            sstk_cfg['provider'] = 'ec2' # default
+        else:
+            sstk_cfg['provider'] = sstk_cfg['clusters'][cluster]['provider']
+    else:
+        sstk_cfg['provider'] = 'ec2'
 
     provider = sstk_cfg['provider']
     if provider == 'ec2':
@@ -521,7 +527,7 @@ def _lookup_hosts(cluster, verify_ssh=False):
 
     if hosts is None:
         # hosts not found in the local config
-        cloud = _provider_api()
+        cloud = _provider_api(cluster)
         hosts = _cluster_hosts(cloud, cluster)
         cloud.close()
 
@@ -1226,7 +1232,7 @@ def new_ec2_instances(cluster,
         The m3 instance types are usually better and less expensive
         as Amazon is phasing out the m1 types.''')    
 
-    ec2 = _provider_api()
+    ec2 = _provider_api(cluster)
     num = int(n)
 
     _status('Going to launch %d new EC2 %s instances using AMI %s' % (num, instance_type, ami))
@@ -1288,7 +1294,16 @@ def new_ec2_instances(cluster,
 
     awsSecGroup = _env(cluster, 'AWS_SECURITY_GROUP')
     # launch the instances in EC2
-    rsrv = ec2.run_instances(ami,
+    # Create placement group benchmarking if it doesn't exist
+    pgnamelist = []
+    for pgname in ec2.get_all_placement_groups():
+        pgnamelist.append(pgname.name)
+    if not(placement_group in pgnamelist):
+        new_placement_group(ec2, placement_group)
+
+    #Avoid no default VPC error by passing the subnet id and the security group id from the sstk config
+    if (defaultvpc_exists()):
+        rsrv = ec2.run_instances(ami,
                              min_count=num,
                              max_count=num,
                              instance_type=instance_type,
@@ -1298,7 +1313,21 @@ def new_ec2_instances(cluster,
                              monitoring_enabled=True,
                              placement=az,
                              placement_group=placement_group)
-
+    else:
+        subnetid = _env(cluster, "subnetid")
+        sgid = _env(cluster, "security_group_id")
+        rsrv = ec2.run_instances(ami,
+                             min_count=num,
+                             max_count=num,
+                             instance_type=instance_type,
+                             key_name=key,
+                             block_device_map=bdm,
+                             monitoring_enabled=True,
+                             placement=az,
+                             placement_group=placement_group,
+                             subnet_id = subnetid,
+                             security_group_ids=[sgid])
+    
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
     # add a tag to each instance so that we can filter many instances by our cluster tag
@@ -1393,7 +1422,7 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solr
 
     _info('Setting up %d SolrCloud nodes on cluster: %s' % (totalNodes, cluster))
 
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
 
     # setup/start zookeeper
     zkHosts = []
@@ -1619,7 +1648,7 @@ def setup_zk_ensemble(cluster):
     """
     Configures, starts, and checks the health of a ZooKeeper ensemble in an existing cluster.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     _verify_ssh_connectivity(hosts)    
     zkHosts = _zk_ensemble(cluster, hosts)
@@ -1630,7 +1659,7 @@ def kill(cluster):
     """
     Terminate all running nodes of the specified cluster.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     taggedInstances = _find_instances_in_cluster(cloud, cluster)
     instance_ids = taggedInstances.keys()
     if confirm('Found %d instances to terminate, continue? ' % len(instance_ids)):
@@ -1652,7 +1681,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if zk is None:
         zkHost = '*local*'
     else:
-        cloud = _provider_api()
+        cloud = _provider_api(cluster)
         zkHosts = _get_zk_hosts(cloud, zk)
         zkHost = zk + ': ' + (','.join(zkHosts))
         cloud.close()
@@ -1912,7 +1941,7 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
             _fatal('JAR %s not found on LOCAL FS!' % jarFile)
     
     # get list of hosts and verify SSH connectivity
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     
     # ability to patch a single server only
@@ -2013,7 +2042,7 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
     if dryRun:
         _warn('Doing a dry-run only.')
 
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     backupDirOnRemoteHost = '../backups/'+collection
     hosts = _cluster_hosts(cloud, cluster)
     numNodes = _num_solr_nodes_per_host(cluster)
@@ -2127,7 +2156,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     """
     Restores an index from backup into an existing collection with the same number of shards
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     
     needsDownload = True if int(alreadyDownloaded) == 0 else False
@@ -2402,7 +2431,7 @@ def restart_solr(cluster,wait=0,pauseBeforeRestart=0):
     default behavior is to poll the node status until it is up with a max
     wait of 180 seconds.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     _rolling_restart_solr(cloud, cluster, None, wait, None, pauseBeforeRestart)
     cloud.close()
 
@@ -2477,7 +2506,7 @@ def setup_instance_stores(cluster,numInstanceStores=1):
     """
     Setup instance stores on an existing cluster; this approach is tightly coupled to the EC2 way.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     if _verify_ssh_connectivity(hosts, 180) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
@@ -2489,7 +2518,7 @@ def reload_collection(cluster,collection):
     """
     Reload a collection using the Collections API; run the healthcheck after reloading.
     """
-    cloud = _provider_api()    
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     urllib2.urlopen('http://%s:8984/solr/admin/collections?action=RELOAD&name=%s' % (hosts[0], collection))
     time.sleep(10)        
@@ -2942,7 +2971,7 @@ def fusion_setup(cluster,vers='2.1.0'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
-    cloud = _provider_api()
+    cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
 
     fusionHome = _env(cluster, 'fusion_home')
@@ -3010,7 +3039,8 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     zkTip = ('%s/zookeeper-%s' % (localTip, zkVers))
     if os.path.isdir(zkTip) is False:
         zookeeperTgz = 'zookeeper-'+zkVers+'.tar.gz'
-        zookeeperDownloadUrl = 'http://www.eng.lsu.edu/mirrors/apache/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
+        #zookeeperDownloadUrl = 'http://www.eng.lsu.edu/mirrors/apache/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
+	zookeeperDownloadUrl = 'http://www.apache.org/dist/zookeeper/zookeeper-'+zkVers+'/'+zookeeperTgz
         zookeeperLocalTgz = localTip+'/'+zookeeperTgz
         if os.path.isfile(zookeeperLocalTgz) is False:
             _status('Downloading ZooKeeper '+zkVers)
@@ -3056,7 +3086,7 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     cfg['zk_data_dir'] = '${zk_home}/data'
     cfg['sstk_cloud_dir'] = cloudDir
     cfg['solr_tip'] = solrTip
-    cfg['ssh_keyfile_on_local'] = ''
+    cfg['ssh_keyfile_path_on_local'] = ''
 
     if fusionTip is not None:
         cfg['fusion_home'] = fusionTip
@@ -3070,6 +3100,21 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     if fusionTip is not None:
         _status('Local SolrCloud cluster started ... starting Fusion services ...')
         fusion_start(cluster)
+
+def new_placement_group(cluster, name):
+    if cluster.create_placement_group(name):
+	    _info('New placement group ' + name + ' created')
+
+def defaultvpc_exists(region='us-east-1'):
+    vpc = boto.vpc.connect_to_region(region)
+    vpc.get_all_vpcs()
+    ret = False
+    for i in vpc.get_all_vpcs():
+	if i.is_default:
+		ret = True
+		break
+    _status("Default VPC exists:" + str(ret))
+    return ret
 
 def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
     """
@@ -3090,7 +3135,9 @@ def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave
     # NOTE: since we're provisioning expensive resources here, I'm not going to try to be robust and catch errors
     # and retry as I don't want false positives to lead to multiple clusters being provisioned without the user
     # realizing what's happened
-    job_flow_id = emr.run_jobflow(cluster,
+    #If no default VPC exists, pass the subnet id
+    if (defaultvpc_exists()):
+        job_flow_id = emr.run_jobflow(cluster,
                     log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
                     availability_zone=availability_zone,
                     master_instance_type='m3.xlarge',
@@ -3104,6 +3151,22 @@ def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave
                     action_on_failure='CONTINUE',
                     job_flow_role='EMR_EC2_DefaultRole',
                     service_role='EMR_DefaultRole')
+    else:
+        subnetid = _env(cluster, "subnetid")
+        dict_subnet = {"Instances.Ec2SubnetId":subnetid}
+        job_flow_id = emr.run_jobflow(cluster,
+                    log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
+                    master_instance_type='m3.xlarge',
+                    slave_instance_type=slave_instance_type,
+                    ec2_keyname=keyname,
+                    num_instances=int(num)+1,
+                    ami_version='3.6.0',
+                    keep_alive=keep_alive,
+                    steps=steps,
+                    enable_debugging=True,
+                    action_on_failure='CONTINUE',
+                    job_flow_role='EMR_EC2_DefaultRole',
+                    service_role='EMR_DefaultRole', api_params = dict_subnet)
 
     # This is needed to workaround a bug where failed steps cause the cluster to
     # shutdown prematurely (preventing diagnosis of the cause of the failure)
@@ -3206,7 +3269,14 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
                '-p','zkHost='+zkHost]
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
-    emr.add_jobflow_steps(job_flow_id, [pigStep])
+    try:
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
+    except socket.gaierror as se:
+        _error('Call to add_jobflow_steps for job flow '+job_flow_id+' failed due to: '+str(se)+'! Will retry in 10 seconds ...')
+        time.sleep(10)
+        emr.add_jobflow_steps(job_flow_id, [pigStep])
+
+    return stepName
 
 def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
     """
@@ -3264,8 +3334,39 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
 
     return stepName
 
+def _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster):
+    steps = emr.list_steps(job_flow_id)
+    stepId = None
+    for s in steps.steps:
+        if s.name == stepName:
+            stepId = s.id
+            break
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False):
+    if stepId is None:
+        _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
+
+    stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
+    return stepStatus
+
+def _print_step_metrics(cluster, collection):
+    throughput = _estimate_indexing_throughput(cluster, collection)
+    _info('Achieved %f docs per second' % throughput)
+
+
+def gc_log_analysis_api(cluster):
+    hosts = _lookup_hosts(cluster)
+    _info("Starting gc log analysis")
+    for host in hosts:
+        with settings(host_string=host), hide('output', 'running'):
+            _info('Host: ' + host)
+            gcjarupload = put('./'+'lib/gc-log-analyzer-0.1-exe.jar',_env(cluster, 'sstk_cloud_dir'))
+            if gcjarupload.succeeded:
+                gclogfilename = run('ls fusion/var/log/api/ | grep gc | tail -1')
+                _info(run('java -jar ' + _env(cluster, 'sstk_cloud_dir') + '/gc-log-analyzer-0.1-exe.jar -log ' + 'fusion/var/log/api/' + gclogfilename + ' -javaVers 1.7' ))
+
+    _info("Gc log analysis complete")
+
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3339,6 +3440,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     fusion_new_collection(cluster,name=collection,rf=2,shards=n,conf='perf')
     fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf')
+
 
     perfPipelineDef = """{
   "id" : "perf",
@@ -3416,6 +3518,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     emrCluster = cluster+'EMR'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
+
+    #Fusion indexing step
     numHadoopNodes = 4
     numReducers = numHadoopNodes * 4 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
@@ -3430,23 +3534,23 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     # wait up to 30 minutes for the indexing job to complete
     emr = boto.emr.connect_to_region(region)
-    steps = emr.list_steps(job_flow_id)
-    stepId = None
-    for s in steps.steps:
-        if s.name == stepName:
-            stepId = s.id
-            break
 
-    if stepId is None:
-        _fatal('Failed to get step ID for step '+stepName+" for EMR job flow: "+job_flow_id)
-
-    stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
-
-    # job completed ...
-    if stepStatus == 'COMPLETED':
-        throughput = _estimate_indexing_throughput(cluster, collection)
-        _info('Achieved %f docs per second' % throughput)
+    if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
+        # job completed ...
+        _print_step_metrics(cluster, collection)
         report_fusion_metrics(cluster, collection)
+
+    #Solr indexing step
+    if index_solr_too:
+        fusion_new_collection(cluster,name='perf-solr',rf=2,shards=n,conf='perf')
+        stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf-solr',collection='perf-solr',
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+        if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
+            # job completed ...
+            _print_step_metrics(cluster, 'perf-solr')
+
+    #GC log analysis for fusion api service    _info("Starting gc log analysis")
+    gc_log_analysis_api(cluster)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
