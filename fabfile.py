@@ -1298,8 +1298,10 @@ def new_ec2_instances(cluster,
     pgnamelist = []
     for pgname in ec2.get_all_placement_groups():
         pgnamelist.append(pgname.name)
-    #if not(placement_group in pgnamelist):
-    #    new_placement_group(ec2, placement_group)
+
+    if placement_group is not None and not(placement_group in pgnamelist):
+        new_placement_group(ec2, placement_group)
+
 
     #Avoid no default VPC error by passing the subnet id and the security group id from the sstk config
     if (defaultvpc_exists()):
