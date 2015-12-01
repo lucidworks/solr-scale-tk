@@ -3532,8 +3532,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
     tag_emr_instances(emrCluster,'Fusion Performance Testing',region)
     clear_collection(cluster, collection)
-    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf',collection=collection,
-                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=True)
 
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
@@ -3808,7 +3808,27 @@ def setup_jmeter(cluster):
             run('tar zxf '+remoteTarFile)
             run('mv solr-scale-tk-0.1-exe.jar apache-jmeter-2.13/lib/ext')
 
-def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword,numThreads=5,numQueriesPerThread=10000,pipeline=None,thruProxy=True):
+def update_jmeter_sstk_jar(cluster):
+    hosts = _lookup_hosts(cluster)
+    sstkJarFile = 'solr-scale-tk-0.1-exe.jar'
+    if os.path.isfile('target/'+sstkJarFile) is False:
+        _fatal('target/'+sstkJarFile+' not found! Please do: mvn clean package before running this command')
+    with settings(host_string=hosts[0]):
+        run('mkdir -p %s/.ssh' % user_home)
+        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
+        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        _status('Uploading '+sstkJarFile+' to '+hosts[0]+' ... this may take a few minutes ...')
+        put('target/solr-scale-tk-0.1-exe.jar', 'solr-scale-tk-0.1-exe.jar')
+        if len(hosts) > 1:
+            for h in range(1,len(hosts)):
+                run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), sstkJarFile, ssh_user, hosts[h], sstkJarFile))
+    for host in hosts:
+        with settings(host_string=host):
+            run('mv solr-scale-tk-0.1-exe.jar apache-jmeter-2.13/lib/ext')
+
+
+
+def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword,mode='fusion',numThreads=5,numQueriesPerThread=10000,pipeline=None,thruProxy=True):
     if os.path.isfile(testPlan) is False:
         _fatal('JMeter test plan file '+testPlan+' not found!')
     hosts = _lookup_hosts(cluster)
@@ -3837,11 +3857,45 @@ def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword,numThrea
     numQueriesPerThread = int(numQueriesPerThread)
     zkHost = _read_cloud_env(fusionCluster)['ZK_HOST']
 
+    remoteLog4JPropsFile = '/home/ec2-user/log4j.properties'
+
+    log4Jcfg = 'log4j.rootLogger=DEBUG, stdout'
+    log4Jcfg += '''
+log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+log4j.appender.stdout.Target=System.out
+log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+log4j.appender.stdout.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%n
+log4j.logger.org.apache.zookeeper=ERROR
+log4j.logger.shaded.apache.http.impl.conn=DEBUG
+log4j.logger.shaded.apache.http.impl.client=DEBUG
+log4j.logger.shaded.apache.http.client=DEBUG
+'''
+
     for host in hosts:
         with settings(host_string=host):
             put(testPlan,testPlan)
-            _runbg('%s/bin/jmeter -JqueryThreads=%d -JnumQueriesPerThread=%d -JZK_HOST=%s -JCOLLECTION=%s -JMODE=fusion "-JFUSION_QUERY_ENDPOINTS=%s" -JFUSION_PASS=%s -n -t %s' %
-                (remoteJmeterDir, numThreads, numQueriesPerThread, zkHost, collection, fusionEndpoint, fusionPassword, testPlan))
+            run('rm -f jmeter.log jmeter.out slow_queries.txt no_results.txt || true')
+            run('rm -f ' + remoteLog4JPropsFile)
+            _fab_append(remoteLog4JPropsFile, log4Jcfg)
+
+            killJmeter = """
+CHECK_PID=`ps auxww | grep -w java | grep -v grep | awk '{print $2}' | sort -r | tr -d ' '`
+if [ "$CHECK_PID" != "" ]; then
+  kill -9 $CHECK_PID
+  echo "killed $CHECK_PID"
+fi
+            """
+            logOpts = '-Dlog4j.debug -Dlog4j.configuration=file:'+remoteLog4JPropsFile
+            rmiOpts = 'export JVM_ARGS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18984 -Dcom.sun.management.jmxremote.rmi.port=18984 -Djava.rmi.server.hostname='+host+' '+logOpts+'"'
+            startJmeter = ('%s/bin/jmeter -JqueryThreads=%d -JnumQueriesPerThread=%d -JZK_HOST=%s -JCOLLECTION=%s -JMODE=%s "-JFUSION_QUERY_ENDPOINTS=%s" -JFUSION_PASS=%s -n -t %s' % (remoteJmeterDir, numThreads, numQueriesPerThread, zkHost, collection, mode, fusionEndpoint, fusionPassword, testPlan))
+            runJmeterSh=("""#!/bin/sh
+%s
+%s
+%s
+""" % (killJmeter, rmiOpts, startJmeter))
+            run('rm run_jmeter.sh || true')
+            _fab_append('run_jmeter.sh', runJmeterSh)
+            _runbg('sh ./run_jmeter.sh', out_file='jmeter.out')
 
 
 

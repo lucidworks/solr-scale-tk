@@ -17,6 +17,7 @@ import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocumentList;
@@ -299,6 +300,10 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
         cloudSolrClient = new CloudSolrClient(zkHost);
         cloudSolrClient.setDefaultCollection(collection);
         cloudSolrClient.connect();
+
+        HttpClientUtil.setMaxConnections(cloudSolrClient.getLbClient().getHttpClient(), 500);
+        HttpClientUtil.setMaxConnectionsPerHost(cloudSolrClient.getLbClient().getHttpClient(), 100);
+
         log.info("Connected to SolrCloud; collection=" + collection);
 
         ZkStateReader zkStateReader = cloudSolrClient.getZkStateReader();

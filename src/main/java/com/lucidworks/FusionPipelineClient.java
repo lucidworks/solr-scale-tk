@@ -22,23 +22,21 @@ import org.apache.http.impl.client.*;
 import org.apache.http.impl.cookie.BasicClientCookie;
 import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
+import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.SolrQuery;
-import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.impl.HttpSolrClient;
-import org.apache.solr.client.solrj.impl.NoOpResponseParser;
 import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.request.QueryRequest;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrException;
-import org.apache.solr.common.util.JsonRecordReader;
 import org.apache.solr.common.util.NamedList;
-import org.codehaus.jackson.JsonNode;
-import org.codehaus.jackson.JsonParser;
 import org.codehaus.jackson.map.ObjectMapper;
 
 import org.apache.http.client.config.CookieSpecs;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.protocol.HttpClientContext;
+
+import org.apache.solr.client.solrj.response.QueryResponse;
 
 import java.io.*;
 import java.net.URL;
@@ -108,13 +106,13 @@ public class FusionPipelineClient {
     // build the HttpClient to be used for all requests
     HttpClientBuilder httpClientBuilder = HttpClientBuilder.create();
     httpClientBuilder.setDefaultRequestConfig(globalConfig).setDefaultCookieStore(cookieStore);
+    httpClientBuilder.setMaxConnPerRoute(100);
+    httpClientBuilder.setMaxConnTotal(500);
 
     if (fusionUser != null && fusionRealm == null)
       httpClientBuilder.addInterceptorFirst(new PreEmptiveBasicAuthenticator(fusionUser, fusionPass));
 
     httpClient = httpClientBuilder.build();
-    HttpClientUtil.setMaxConnections(httpClient, 500);
-    HttpClientUtil.setMaxConnectionsPerHost(httpClient, 100);
 
     originalEndpoints = Arrays.asList(endpointUrl.split(","));
     try {
@@ -556,7 +554,9 @@ public class FusionPipelineClient {
     }
     QueryRequest qreq = new QueryRequest(query);
     qreq.setResponseParser(new XMLResponseParser());
-    return new QueryResponse(fusionSession.solrClient.request(qreq), fusionSession.solrClient);
+    QueryResponse qr = new QueryResponse((SolrClient)fusionSession.solrClient);
+    qr.setResponse(fusionSession.solrClient.request(qreq));
+    return qr;
   }
 
   protected void raiseFusionServerException(String endpoint, HttpEntity entity, int statusCode, HttpResponse response, int requestId) {

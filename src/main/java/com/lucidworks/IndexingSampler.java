@@ -20,6 +20,7 @@ import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
@@ -51,7 +52,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   private static List<String> englishWords = null;
 
-  protected CloudSolrClient cloudSolrServer;
+  protected CloudSolrClient cloudSolrClient;
   //protected Random rand;
   protected FieldSpec[] fields;
   protected boolean commitAtEnd = true;
@@ -196,10 +197,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         throw new IllegalArgumentException("ZK_HOST is required when using ENDPOINT_TYPE=" + type);
 
       log.info("Connecting to SolrCloud using zkHost: " + zkHost);
-      cloudSolrServer = new CloudSolrClient(zkHost);
-      cloudSolrServer.setDefaultCollection(collection);
-      cloudSolrServer.connect();
+      cloudSolrClient = new CloudSolrClient(zkHost);
+      cloudSolrClient.setDefaultCollection(collection);
+      cloudSolrClient.connect();
       log.info("Connected to SolrCloud; collection=" + collection);
+      HttpClientUtil.setMaxConnections(cloudSolrClient.getLbClient().getHttpClient(), 500);
+      HttpClientUtil.setMaxConnectionsPerHost(cloudSolrClient.getLbClient().getHttpClient(), 100);
     } else if ("fusion".equals(type)) {
       String fusionIndexPipelineEndpoint = params.get("FUSION_INDEX_PIPELINE");
       if (fusionIndexPipelineEndpoint == null || fusionIndexPipelineEndpoint.trim().length() == 0)
@@ -258,10 +261,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     if (refs <= 0) {
       joinKeyAI.set(0);
 
-      if (commitAtEnd && cloudSolrServer != null) {
+      if (commitAtEnd && cloudSolrClient != null) {
         log.info("Sending final commit to SolrCloud.");
         try {
-          cloudSolrServer.commit();
+          cloudSolrClient.commit();
         } catch (Exception e) {
           log.error("Failed to commit due to: " + e, e);
         }
@@ -273,12 +276,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       }
     }
 
-    if (cloudSolrServer != null) {
+    if (cloudSolrClient != null) {
       try {
-        cloudSolrServer.shutdown();
+        cloudSolrClient.shutdown();
       } catch (Exception ignore) {
       }
-      cloudSolrServer = null;
+      cloudSolrClient = null;
       log.info("Shutdown CloudSolrClient.");
     }
 
@@ -300,7 +303,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
     int totalDocs = 0;
     try {
-      if (cloudSolrServer != null) {
+      if (cloudSolrClient != null) {
         totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerThread, queueSize, batchSize);
       } else {
         totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerThread, batchSize);
@@ -589,7 +592,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         updateRequest.add(batch);
       }
 
-      cloudSolrServer.request(updateRequest);
+      cloudSolrClient.request(updateRequest);
       sent = batch.size();
     } catch (Exception exc) {
 

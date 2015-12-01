@@ -10,6 +10,7 @@ import org.apache.jmeter.samplers.SampleResult;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
+import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.response.FieldStatsInfo;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.client.solrj.response.TermsResponse;
@@ -22,6 +23,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.commons.math3.distribution.NormalDistribution;
 
 public class QuerySampler extends AbstractJavaSamplerClient implements Serializable {
   private static final long serialVersionUID = 1L;
@@ -32,7 +34,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
   // none, a final hard commit is sent.
   private static AtomicInteger refCounter = new AtomicInteger(0);
   private static final MetricRegistry metrics = new MetricRegistry();
-  private static final com.codahale.metrics.Timer queryTimer = metrics.timer("query");
+  private static final com.codahale.metrics.Timer queryTimer = metrics.timer("queryRoundTrip");
+  private static final com.codahale.metrics.Timer qTimeTimer = metrics.timer("QTime");
   private static final com.codahale.metrics.Counter noResultsCounter = metrics.counter("noresults");
   private static final com.codahale.metrics.Counter excCounter = metrics.counter("exceptions");
   private static final Counter slowCounter = metrics.counter("slowQueries");
@@ -183,8 +186,13 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
   protected void executeQuery(SolrQuery query, SampleResult result) {
     final com.codahale.metrics.Timer.Context queryTimerCtxt = queryTimer.time();
     long qTime = 0;
+    boolean timerStopped = false;
     try {
       QueryResponse qr = useFusion ? fusionPipelineClient.queryFusion(query) : cloudSolrClient.query(query);
+      qTime = queryTimerCtxt.stop();
+      timerStopped = true;
+      qTimeTimer.update(qr.getQTime(), TimeUnit.MILLISECONDS);
+
       if (qr.getResults().getNumFound() == 0) {
         noResultsCounter.inc();
 
@@ -205,7 +213,9 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
       log.error("Failed to execute query ["+query.toString()+"] due to: "+solrExc);
       excCounter.inc();
     } finally {
-      qTime = queryTimerCtxt.stop();
+      if (!timerStopped) {
+        qTime = queryTimerCtxt.stop();
+      }
     }
 
     long qTimeMs = TimeUnit.MILLISECONDS.convert(qTime, TimeUnit.NANOSECONDS);
@@ -341,9 +351,12 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
         String zkHost = params.get("ZK_HOST");
         log.info("Connecting to SolrCloud using zkHost: " + zkHost);
         String collection = params.get("COLLECTION");
+
         cloudSolrClient = new CloudSolrClient(zkHost);
         cloudSolrClient.setDefaultCollection(collection);
         cloudSolrClient.connect();
+        HttpClientUtil.setMaxConnections(cloudSolrClient.getLbClient().getHttpClient(), 500);
+        HttpClientUtil.setMaxConnectionsPerHost(cloudSolrClient.getLbClient().getHttpClient(), 100);
         log.info("Connected to SolrCloud; collection=" + collection);
       }
 
