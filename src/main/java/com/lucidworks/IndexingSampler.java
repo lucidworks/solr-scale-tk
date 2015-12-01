@@ -13,7 +13,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import com.lucidworks.client.FusionPipelineClient;
 import org.apache.http.NoHttpResponseException;
 import org.apache.http.conn.ConnectTimeoutException;
 import org.apache.jmeter.protocol.java.sampler.AbstractJavaSamplerClient;
@@ -24,7 +23,9 @@ import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.common.SolrException;
 import org.apache.solr.common.SolrInputDocument;
-import org.apache.log.Logger;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 import com.codahale.metrics.ConsoleReporter;
 import com.codahale.metrics.MetricRegistry;
@@ -33,11 +34,10 @@ import com.codahale.metrics.Timer;
 import org.apache.solr.common.params.ModifiableSolrParams;
 import sdsu.algorithms.data.Zipf;
 
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-
 public class IndexingSampler extends AbstractJavaSamplerClient implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  private static final Log log = LogFactory.getLog(IndexingSampler.class);
 
   static {
     TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
@@ -51,7 +51,6 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   private static List<String> englishWords = null;
 
-  protected Logger log;
   protected CloudSolrClient cloudSolrServer;
   //protected Random rand;
   protected FieldSpec[] fields;
@@ -156,8 +155,6 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   public void setupTest(JavaSamplerContext context) {
     super.setupTest(context);
 
-    log = getLogger().getChildLogger("LW-IndexingSampler");
-
     Map<String, String> params = new HashMap<String, String>();
     Iterator<String> paramNames = context.getParameterNamesIterator();
     while (paramNames.hasNext()) {
@@ -198,11 +195,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       if (zkHost == null || zkHost.trim().length() == 0)
         throw new IllegalArgumentException("ZK_HOST is required when using ENDPOINT_TYPE=" + type);
 
-      getLogger().info("Connecting to SolrCloud using zkHost: " + zkHost);
+      log.info("Connecting to SolrCloud using zkHost: " + zkHost);
       cloudSolrServer = new CloudSolrClient(zkHost);
       cloudSolrServer.setDefaultCollection(collection);
       cloudSolrServer.connect();
-      getLogger().info("Connected to SolrCloud; collection=" + collection);
+      log.info("Connected to SolrCloud; collection=" + collection);
     } else if ("fusion".equals(type)) {
       String fusionIndexPipelineEndpoint = params.get("FUSION_INDEX_PIPELINE");
       if (fusionIndexPipelineEndpoint == null || fusionIndexPipelineEndpoint.trim().length() == 0)

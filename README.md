@@ -114,19 +114,36 @@ aws_secret_access_key = ?
 ```
 For more information about boto, please see: https://github.com/boto/boto
 
-You'll need to setup a security group named solr-scale-tk (or update the fabfile.py to change the name).
+Use VPC
+--------
 
-At a minimum you should allow inbound TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
+Recent changes to EC2 security and networking make working with EC2 classic instead of using a VPC very difficult. Consequently, this toolkit only supports working with VPC.
+For background on this issue, please see: https://aws.amazon.com/blogs/aws/amazon-ec2-update-virtual-private-clouds-for-everyone/
+
+For a tutorial on setting up your VPC, see: http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/getting-started-create-vpc.html
+
+The easiest way to integrate this toolkit with your VPC is to set a subnet ID in your `~/.sstk` file, such as:
+
+```
+"vpc_subnetid": "subnet-cfaaabe4"
+```
+
+You should also configure the subnet to auto-assign a public IP if you want to access the instances from remote servers.
+
+Next, you'll need to setup a security group named solr-scale-tk (or update the fabfile.py to change the name).
+
+At a minimum you should allow inbound TCP traffic to ports: 8983, 8984-8989, SSH, and 2181 (ZooKeeper). You should also allow all traffic between instances in the security group. However, it is your responsibility to review the security configuration of your cluster and lock it down appropriately.
 You should ensure that the solr-scale-tk security group (or whatever you name it) has full TCP inbound traffic to all nodes (for ZooKeeper), which is accomplished by adding the security group as an inbound rule,
 see: http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-network-security.html
 
 You'll also need to create an keypair (using the Amazon console) named solr-scale-tk (you can rename the key used by the framework, see: AWS_KEY_NAME). After downloading the keypair file (solr-scale-tk.pem), save it to ~/.ssh/ and change permissions: chmod 600 ~/.ssh/solr-scale-tk.pem
 
-You can name the security group and keypair whatever you want, however if you change the names, then you need to customize your ~/.sstk file to override the defaults, such as:
+You can name the security group and keypair whatever you want, however if you change the names, then you need to customize your `~/.sstk` file to override the defaults, such as:
 
 ```
 "ssh_keyfile_path_on_local": "YOUR PEM FILE",
 "AWS_KEY_NAME": "YOUR KEY NAME",
+"AWS_SECURITY_GROUP":"solr-scale-tk-tjp",
 ```
 
 Using the US West (N. California) Region

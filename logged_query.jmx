@@ -44,14 +44,14 @@
                 <stringProp name="Argument.value">5150</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
+              <elementProp name="LOG_DIR" elementType="Argument">
+                <stringProp name="Argument.name">LOG_DIR</stringProp>
+                <stringProp name="Argument.value">${__P(LOG_DIR)}</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
               <elementProp name="SLOW_QUERY_THRESHOLD_MS" elementType="Argument">
                 <stringProp name="Argument.name">SLOW_QUERY_THRESHOLD_MS</stringProp>
                 <stringProp name="Argument.value">150</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
-              <elementProp name="TERMS_LIMIT" elementType="Argument">
-                <stringProp name="Argument.name">TERMS_LIMIT</stringProp>
-                <stringProp name="Argument.value">4000</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="MODE" elementType="Argument">
@@ -86,7 +86,7 @@
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="classname">com.lucidworks.QuerySampler</stringProp>
+          <stringProp name="classname">com.lucidworks.LoggedQuerySampler</stringProp>
         </JavaSampler>
         <hashTree/>
       </hashTree>

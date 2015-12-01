@@ -1100,8 +1100,6 @@ def _wait_to_see_fusion_proxy_up(host, maxWaitSecs=30):
 
     return isRunning
 
-
-
 def _is_fusion_proxy_up(hostAndPort):
     isProxyUp = False
     try:
@@ -1166,6 +1164,31 @@ def _lookup_emr_job_flow_id(emrApi, emrCluster):
 
     return job_flow_id
 
+def _resolve_vpc_subnetid(cluster,az):
+    vpcSubnetId = _env(cluster, "vpc_subnetid", "")
+    if vpcSubnetId == "":
+        vpcSubnetId = None #reset
+        _status('No VPC subnet ID configured ... looking up best available option in the '+az+' availability zone ...')
+        vpc = boto.vpc.connect_to_region(az[0:len(az)-1])
+        for sn in vpc.get_all_subnets(filters={"availabilityZone":[az]}):
+            vpcSubnetId = sn.id
+            _status('Found '+vpcSubnetId+' in the '+az+' availability zone')
+            break
+    if vpcSubnetId is None:
+        _fatal('Cannot determine VPC subnet ID for launching EC2 instances in '+az+' Please set the vpc_subnetid property in your ~/.sstk file.')
+    return vpcSubnetId
+
+def _defaultvpc_exists(region='us-east-1'):
+    vpc = boto.vpc.connect_to_region(region)
+    vpc.get_all_vpcs()
+    ret = False
+    for i in vpc.get_all_vpcs():
+        print(str(i))
+        if i.is_default:
+            ret = True
+            break
+    _status("Default VPC exists:" + str(ret))
+    return ret
 
 # -----------------------------------------------------------------------------
 # Fabric actions begin here ... anything above this are private helper methods.
@@ -1179,7 +1202,9 @@ def new_ec2_instances(cluster,
                       az=None,
                       placement_group=None,
                       skipStores=None,
-                      purpose=None):
+                      purpose=None,
+                      vpcSubnetId=None,
+                      vpcSecurityGroupId=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1292,8 +1317,8 @@ def new_ec2_instances(cluster,
             bdm[devName] = dev_sdb
             _info('Setup Instance store BlockDeviceMapping: %s -> %s' % (devName, ephName))
 
-    awsSecGroup = _env(cluster, 'AWS_SECURITY_GROUP')
     # launch the instances in EC2
+
     # Create placement group benchmarking if it doesn't exist
     pgnamelist = []
     for pgname in ec2.get_all_placement_groups():
@@ -1302,33 +1327,35 @@ def new_ec2_instances(cluster,
     if placement_group is not None and not(placement_group in pgnamelist):
         new_placement_group(ec2, placement_group)
 
+    # Using a VPC is required now in order to simplify working with EC2 (too many problems trying to support both)
+    if vpcSubnetId is None:
+        vpcSubnetId = _resolve_vpc_subnetid(cluster, az)
 
-    #Avoid no default VPC error by passing the subnet id and the security group id from the sstk config
-    if (defaultvpc_exists()):
-        rsrv = ec2.run_instances(ami,
-                             min_count=num,
-                             max_count=num,
-                             instance_type=instance_type,
-                             key_name=key,
-                             security_groups=[awsSecGroup],
-                             block_device_map=bdm,
-                             monitoring_enabled=True,
-                             placement=az,
-                             placement_group=placement_group)
-    else:
-        subnetid = _env(cluster, "subnetid")
-        sgid = _env(cluster, "security_group_id")
-        rsrv = ec2.run_instances(ami,
-                             min_count=num,
-                             max_count=num,
-                             instance_type=instance_type,
-                             key_name=key,
-                             block_device_map=bdm,
-                             monitoring_enabled=True,
-                             placement=az,
-                             placement_group=placement_group,
-                             subnet_id = subnetid,
-                             security_group_ids=[sgid])
+    if vpcSecurityGroupId is None:
+        vpcSecurityGroupId = _env(cluster, "vpc_security_group_id", "")
+        if vpcSecurityGroupId == "":
+            vpcSecurityGroupId = None
+            secGroupName = _env(cluster, "AWS_SECURITY_GROUP")
+            _status('No VPC security group ID configured ... looking up using AWS_SECURITY_GROUP='+secGroupName)
+            for sg in ec2.get_all_security_groups():
+                if sg.name == secGroupName:
+                    vpcSecurityGroupId = sg.id
+                    break
+        if vpcSecurityGroupId is None:
+            _fatal('Cannot determine security group ID for launching EC2 instances in a VPC! Please set the vpc_security_group_id property in your ~/.sstk file.')
+
+    _info('Launching '+str(num)+' EC2 instances in VPC subnet '+vpcSubnetId+' using the '+vpcSecurityGroupId+' security group in '+az)
+    rsrv = ec2.run_instances(ami,
+                         min_count=num,
+                         max_count=num,
+                         instance_type=instance_type,
+                         key_name=key,
+                         block_device_map=bdm,
+                         monitoring_enabled=True,
+                         placement=az,
+                         placement_group=placement_group,
+                         subnet_id = vpcSubnetId,
+                         security_group_ids=[vpcSecurityGroupId])
     
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
     
@@ -2000,9 +2027,12 @@ def deploy_config(cluster,localConfigDir,configName):
     
     if os.path.isdir(localConfigDir) is False:
         _fatal('Local config directory %s not found!' % localConfigDir)
+
+    if os.path.isfile(localConfigDir+'/solrconfig.xml') is False:
+        # see if there is a conf subdirectory
+        if os.path.isdir(localConfigDir+'/conf'):
+            localConfigDir = localConfigDir+'/conf'
         
-    parts = localConfigDir.split('/')
-    dirName = parts[len(parts)-1]
     hosts = _lookup_hosts(cluster, False)
     sstkScript = _env(cluster, 'SSTK')
     remoteCloudDir = _env(cluster, 'sstk_cloud_dir')
@@ -2011,7 +2041,7 @@ def deploy_config(cluster,localConfigDir,configName):
         run('rm -rf '+remoteDir)
         run('mkdir -p '+remoteDir)
         put(localConfigDir, remoteDir)
-        run('mv %s/%s %s/conf || true' % (remoteDir, dirName, remoteDir))
+        _info('Uploaded '+localConfigDir+' to '+remoteDir)
         run(sstkScript + ' upconfig ' + configName)
 
 def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
@@ -2760,7 +2790,7 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     nodes = len(hosts) * numNodes
     replicas = int(rf) * int(shards)
     maxShardsPerNode = int(max(1, round(replicas / nodes)))
-    json = '{ "id":"'+name+'", "solrConfName":"'+conf+'", "solrParams": { "replicationFactor":'+str(rf)+', "numShards":'+str(shards)+', "maxShardsPerNode":'+str(maxShardsPerNode)+' }}'
+    json = '{ "id":"'+name+'", "solrParams": { "collection.configName":"'+conf+'", "replicationFactor":'+str(rf)+', "numShards":'+str(shards)+', "maxShardsPerNode":'+str(maxShardsPerNode)+' }}'
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
@@ -3010,7 +3040,7 @@ def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.1.0'):
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
     new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo')
-    deploy_config(cluster,'data_driven_schema_configs','cloud')
+    deploy_config(cluster,'perf','cloud')
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,api=n)
 
@@ -3107,18 +3137,7 @@ def new_placement_group(cluster, name):
     if cluster.create_placement_group(name):
 	    _info('New placement group ' + name + ' created')
 
-def defaultvpc_exists(region='us-east-1'):
-    vpc = boto.vpc.connect_to_region(region)
-    vpc.get_all_vpcs()
-    ret = False
-    for i in vpc.get_all_vpcs():
-	if i.is_default:
-		ret = True
-		break
-    _status("Default VPC exists:" + str(ret))
-    return ret
-
-def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
+def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
     """
     Provisions a new Elastic MapReduce cluster.
     """
@@ -3137,38 +3156,24 @@ def emr_new_cluster(cluster, region='us-east-1', num='4', keep_alive=True, slave
     # NOTE: since we're provisioning expensive resources here, I'm not going to try to be robust and catch errors
     # and retry as I don't want false positives to lead to multiple clusters being provisioned without the user
     # realizing what's happened
-    #If no default VPC exists, pass the subnet id
-    if (defaultvpc_exists()):
-        job_flow_id = emr.run_jobflow(cluster,
-                    log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
-                    availability_zone=availability_zone,
-                    master_instance_type='m3.xlarge',
-                    slave_instance_type=slave_instance_type,
-                    ec2_keyname=keyname,
-                    num_instances=int(num)+1,
-                    ami_version='3.6.0',
-                    keep_alive=keep_alive,
-                    steps=steps,
-                    enable_debugging=True,
-                    action_on_failure='CONTINUE',
-                    job_flow_role='EMR_EC2_DefaultRole',
-                    service_role='EMR_DefaultRole')
-    else:
-        subnetid = _env(cluster, "subnetid")
-        dict_subnet = {"Instances.Ec2SubnetId":subnetid}
-        job_flow_id = emr.run_jobflow(cluster,
-                    log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
-                    master_instance_type='m3.xlarge',
-                    slave_instance_type=slave_instance_type,
-                    ec2_keyname=keyname,
-                    num_instances=int(num)+1,
-                    ami_version='3.6.0',
-                    keep_alive=keep_alive,
-                    steps=steps,
-                    enable_debugging=True,
-                    action_on_failure='CONTINUE',
-                    job_flow_role='EMR_EC2_DefaultRole',
-                    service_role='EMR_DefaultRole', api_params = dict_subnet)
+    if subnetid is None:
+        subnetid = _resolve_vpc_subnetid(cluster, availability_zone)
+    dict_subnet = {"Instances.Ec2SubnetId":subnetid}
+    _info('Launching EMR cluster '+cluster+' in VPC subnet '+subnetid)
+    job_flow_id = emr.run_jobflow(cluster,
+                log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
+                master_instance_type='m3.xlarge',
+                slave_instance_type=slave_instance_type,
+                ec2_keyname=keyname,
+                num_instances=int(num)+1,
+                ami_version='3.6.0',
+                keep_alive=keep_alive,
+                steps=steps,
+                enable_debugging=True,
+                action_on_failure='CONTINUE',
+                job_flow_role='EMR_EC2_DefaultRole',
+                service_role='EMR_DefaultRole',
+                api_params = dict_subnet)
 
     # This is needed to workaround a bug where failed steps cause the cluster to
     # shutdown prematurely (preventing diagnosis of the cause of the failure)
@@ -3415,8 +3420,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
                   auto_confirm=True,
                   solrJavaMemOpts=solrJavaMemOpts,
                   purpose='Fusion Performance Testing')
-    _status('SolrCloud cluster provisioned ... deploying the data_driven_schema_configs config directory to ZK as name: perf')
-    deploy_config(cluster,'data_driven_schema_configs','perf')
+    _status('SolrCloud cluster provisioned ... deploying the perf config directory to ZK as name: perf')
+    deploy_config(cluster,'perf','perf')
+    deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
 
@@ -3441,8 +3447,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     collection = 'perf'
 
     fusion_new_collection(cluster,name=collection,rf=2,shards=n,conf='perf')
-    fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf')
-
+    fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf_js')
 
     perfPipelineDef = """{
   "id" : "perf",
@@ -3542,16 +3547,16 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         _print_step_metrics(cluster, collection)
         report_fusion_metrics(cluster, collection)
 
-    #Solr indexing step
+    # Solr indexing step
     if index_solr_too:
-        fusion_new_collection(cluster,name='perf-solr',rf=2,shards=n,conf='perf')
-        stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf-solr',collection='perf-solr',
-                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+        new_collection(cluster,name='perf-solr',rf=2,shards=n,existingConfName='perf')
+        stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf-solr',
+                                       region=region, reducers=numReducers, batch_size=bufferSize)
         if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
             # job completed ...
             _print_step_metrics(cluster, 'perf-solr')
 
-    #GC log analysis for fusion api service    _info("Starting gc log analysis")
+    # GC log analysis for fusion api service    _info("Starting gc log analysis")
     gc_log_analysis_api(cluster)
 
     if keepRunning:
@@ -3775,4 +3780,70 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1'):
 
     ec2.close()
         
-        
+
+def setup_jmeter(cluster):
+    hosts = _lookup_hosts(cluster)
+    # stage the JMeter binary on all hosts
+    remoteTarFile = 'apache-jmeter-2.13.tgz'
+    sstkJarFile = 'solr-scale-tk-0.1-exe.jar'
+
+    if os.path.isfile('target/'+sstkJarFile) is False:
+        _fatal('target/'+sstkJarFile+' not found! Please do: mvn clean package before running this command')
+
+    with settings(host_string=hosts[0]):
+        _status('Uploading '+sstkJarFile+' to '+hosts[0]+' ... this may take a few minutes ...')
+        put('target/solr-scale-tk-0.1-exe.jar', 'solr-scale-tk-0.1-exe.jar')
+        _status('Downloading JMeter 2.13 from Apache Mirror ...')
+        run('wget http://apache.cs.utah.edu/jmeter/binaries/apache-jmeter-2.13.tgz -O '+remoteTarFile)
+        run('mkdir -p %s/.ssh' % user_home)
+        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
+        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        if len(hosts) > 1:
+            for h in range(1,len(hosts)):
+                run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteTarFile, ssh_user, hosts[h], remoteTarFile))
+                run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), sstkJarFile, ssh_user, hosts[h], sstkJarFile))
+
+    for host in hosts:
+        with settings(host_string=host):
+            run('tar zxf '+remoteTarFile)
+            run('mv solr-scale-tk-0.1-exe.jar apache-jmeter-2.13/lib/ext')
+
+def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword,numThreads=5,numQueriesPerThread=10000,pipeline=None,thruProxy=True):
+    if os.path.isfile(testPlan) is False:
+        _fatal('JMeter test plan file '+testPlan+' not found!')
+    hosts = _lookup_hosts(cluster)
+
+    remoteJmeterDir = 'apache-jmeter-2.13'
+
+    if pipeline is None:
+        pipeline = collection+'-default'
+
+    goThruProxy = bool(thruProxy)
+    fusionEndpoint = ''
+    if cluster != fusionCluster:
+        fusionHosts = _lookup_hosts(fusionCluster)
+    else:
+        fusionHosts = hosts
+
+    for fh in fusionHosts:
+        if len(fusionEndpoint) > 0:
+            fusionEndpoint += ','
+        if goThruProxy:
+            fusionEndpoint += 'http://'+fh+':8764/api/apollo/query-pipelines/'+pipeline+'/collections/'+collection
+        else:
+            fusionEndpoint += 'http://'+fh+':8765/api/v1/query-pipelines/'+pipeline+'/collections/'+collection
+
+    numThreads = int(numThreads)
+    numQueriesPerThread = int(numQueriesPerThread)
+    zkHost = _read_cloud_env(fusionCluster)['ZK_HOST']
+
+    for host in hosts:
+        with settings(host_string=host):
+            put(testPlan,testPlan)
+            _runbg('%s/bin/jmeter -JqueryThreads=%d -JnumQueriesPerThread=%d -JZK_HOST=%s -JCOLLECTION=%s -JMODE=fusion "-JFUSION_QUERY_ENDPOINTS=%s" -JFUSION_PASS=%s -n -t %s' %
+                (remoteJmeterDir, numThreads, numQueriesPerThread, zkHost, collection, fusionEndpoint, fusionPassword, testPlan))
+
+
+
+
+

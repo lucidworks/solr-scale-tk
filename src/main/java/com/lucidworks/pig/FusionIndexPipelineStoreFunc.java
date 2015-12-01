@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-import com.lucidworks.client.FusionPipelineClient;
+import com.lucidworks.FusionPipelineClient;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.mapreduce.Counter;
 import org.apache.hadoop.mapreduce.Job;
