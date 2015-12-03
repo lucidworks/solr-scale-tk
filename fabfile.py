@@ -661,7 +661,6 @@ def _restart_solr(cluster, host, solrPortBase, pauseBeforeRestart=0):
                 _status('Sleeping for %d seconds before starting Solr node on %s' % (pauseTime, hostAndPort))
                 time.sleep(pauseTime)
         _status('Running start on remote: ' + remoteStartCmd)
-        run('rm -rf '+solrTip+'/'+solrDir+'/solr-webapp/webapp || true')
         _runbg(remoteStartCmd)
         time.sleep(2)
 
