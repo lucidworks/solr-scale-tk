@@ -32,7 +32,7 @@ CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
 AWS_PV_AMI_ID = 'ami-5d126438'
-AWS_HVM_AMI_ID = 'ami-21304644'
+AWS_HVM_AMI_ID = 'ami-7ab1ea10' # ami-ebec998b
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'm3.medium'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -50,8 +50,8 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_60'
-_config['solr_tip'] = '${user_home}/solr-5.2.1'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_65'
+_config['solr_tip'] = '${user_home}/solr-5.4.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -3515,7 +3515,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     _fusion_api(hosts[0], 'index-pipelines', 'POST', perfJsPipelineDef)
 
     # raise the buffer size for high-volume indexing into Solr
-    bufferSize = 500
+    bufferSize = 3000
     searchCluster = _fusion_api(hosts[0], 'searchCluster/default')
     sc = json.loads(searchCluster)
     sc['bufferSize'] = str(bufferSize)
@@ -3527,13 +3527,13 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
 
     #Fusion indexing step
-    numHadoopNodes = 4
-    numReducers = numHadoopNodes * 4 # 4 reducer slots per m1.xlarge
+    numHadoopNodes = 6
+    numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
     tag_emr_instances(emrCluster,'Fusion Performance Testing',region)
     clear_collection(cluster, collection)
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
-                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=True)
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
 
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
@@ -3898,6 +3898,25 @@ fi
             _runbg('sh ./run_jmeter.sh', out_file='jmeter.out')
 
 
+def print_fusion_endpoints(cluster,collection,pipeline=None,thruProxy=True):
+    if pipeline is None:
+        pipeline = collection+'-default'
 
+    goThruProxy = bool(thruProxy)
+    fusionEndpoint = ''
+    fusionHosts = _lookup_hosts(cluster)
+    for fh in fusionHosts:
+        if len(fusionEndpoint) > 0:
+            fusionEndpoint += ','
+        if goThruProxy:
+            fusionEndpoint += 'http://'+fh+':8764/api/apollo/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+        else:
+            fusionEndpoint += 'http://'+fh+':8765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
+    print('Endpoints: '+fusionEndpoint)
 
-
+def set_cluster_buffer_size(cluster,name='default',bufferSize=1000):
+    hosts = _lookup_hosts(cluster)
+    searchCluster = _fusion_api(hosts[0], 'searchCluster/'+name)
+    sc = json.loads(searchCluster)
+    sc['bufferSize'] = str(bufferSize)
+    _fusion_api(hosts[0], 'searchCluster/'+name, 'PUT', json.dumps(sc))

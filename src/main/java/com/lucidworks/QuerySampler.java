@@ -62,7 +62,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
     @Override
     protected Random initialValue() {
-      return new Random(randomSeed+incr.incrementAndGet());
+      int offset = incr.incrementAndGet() % 3;
+      return new Random(randomSeed+offset);
     }
   };
 
