@@ -76,7 +76,6 @@
                                     <exclude>org.apache.hadoop:*</exclude>
                                     <exclude>org.apache.pig:*</exclude>
                                     <exclude>org.bouncycastle:*</exclude>
-                                    <exclude>org.apache.jmeter:*</exclude>
                                     <exclude>org.apache.tika:*</exclude>
                                     <exclude>org.objectweb.asm:*</exclude>
                                     <exclude>asm:*</exclude>
