@@ -2926,15 +2926,15 @@ GC_TUNE=(-XX:NewRatio=3 \
     if numConnectorsNodes > len(hosts):
         _fatal('Cannot start more than %d Connectors nodes!' % len(hosts))
 
-    with settings(host_string=host), hide('output', 'running'):
+    with settings(host_string=hosts[0]), hide('output', 'running'):
         run(fusionBin+'/spark-master stop || true')
         _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
         time.sleep(2)
-        _info('Started Spark-Master service on '+host)
+        _info('Started Spark-Master service on '+hosts[0])
         run(fusionBin+'/spark-worker stop || true')
         _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
         time.sleep(2)
-        _info('Started Spark-Worker service on '+host)
+        _info('Started Spark-Worker service on '+hosts[0])
 
     # start additional Spark Workers on all nodes where there will be an API
     if numApiNodes > 1:
