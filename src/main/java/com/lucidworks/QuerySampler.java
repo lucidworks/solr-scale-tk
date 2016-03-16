@@ -413,10 +413,10 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
           try {
             if (fusionAuth) {
               fusionPipelineClient =
-                      new FusionPipelineClient(fusionEndpoints,
-                          params.get("FUSION_USER"),
-                          params.get("FUSION_PASS"),
-                          params.get("FUSION_REALM"));
+                  new FusionPipelineClient(fusionEndpoints,
+                      params.get("FUSION_USER"),
+                      params.get("FUSION_PASS"),
+                      params.get("FUSION_REALM"));
 
             } else {
               fusionPipelineClient = new FusionPipelineClient(fusionEndpoints);
