@@ -74,6 +74,30 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     }
   };
 
+  private static ThreadLocal<String[]> filterQueries = new ThreadLocal<String[]>() {
+    @Override
+    protected String[] initialValue() {
+      return new String[]{};
+    }
+  };
+
+  private static ThreadLocal<Long> intervalTime = new ThreadLocal<Long>() {
+    @Override
+    protected Long initialValue() {
+      return new Long(0);
+    }
+  };
+
+  private static ThreadLocal<Long> currentTime = new ThreadLocal<Long>() {
+    @Override
+    protected Long initialValue() {
+      return System.nanoTime();
+    }
+  };
+
+
+
+
   public SampleResult runTest(JavaSamplerContext context) {
 
     if (!setupOk)
@@ -87,6 +111,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     Random random = rands.get();
 
     StringBuilder randomQuery = new StringBuilder();
+
     if (random.nextBoolean())
       randomQuery.append(getTermClause("string1_s")).append(" ");
     if (random.nextBoolean())
@@ -105,37 +130,46 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
     query.setQuery(qs);
 
-    if (random.nextBoolean()) {
-      if (random.nextInt(10) < 4)
-        addIntRangeFilter(query, "integer1_i");
+    if (currentTime.get() + intervalTime.get() > System.nanoTime() || intervalTime.get() == 0) {
+      if (random.nextBoolean()) {
+        //Lambda is 5 seconds
+        Long interval = poissonDelay(5000.0).longValue();
+        intervalTime.set(interval);
+        currentTime.set(System.currentTimeMillis());
+        if (random.nextInt(10) < 4)
+          addIntRangeFilter(query, "integer1_i");
 
-      if (random.nextInt(5) == 3)
-        addIntRangeFilter(query, "integer2_i");
+        if (random.nextInt(5) == 3)
+          addIntRangeFilter(query, "integer2_i");
 
-      if (random.nextInt(10) == 5)
-        addLongRangeFilter(query, "long1_l");
+        if (random.nextInt(10) == 5)
+          addLongRangeFilter(query, "long1_l");
 
-      if (random.nextInt(20) == 10)
-        addLongRangeFilter(query, "long2_l");
+        if (random.nextInt(20) == 10)
+          addLongRangeFilter(query, "long2_l");
 
-      if (random.nextInt(7) <= 2)
-        query.addFilterQuery(getDateRangeFilter("timestamp1_tdt"));
+        if (random.nextInt(7) <= 2)
+          query.addFilterQuery(getDateRangeFilter("timestamp1_tdt"));
 
-      if (random.nextInt(10) == 4)
-        query.addFilterQuery(getDateRangeFilter("timestamp2_tdt"));
+        if (random.nextInt(10) == 4)
+          query.addFilterQuery(getDateRangeFilter("timestamp2_tdt"));
 
-      if (random.nextInt(40) <= 3) {
-        query.addFilterQuery("double1_d:[* TO *]");
+        if (random.nextInt(40) <= 3) {
+          query.addFilterQuery("double1_d:[* TO *]");
+        }
+
+        if (random.nextInt(50) <= 3) {
+          query.addFilterQuery("double2_d:[* TO *]");
+        }
+
+        if (random.nextInt(100) == 0) {
+          query.addFilterQuery("-id:[* TO *]");
+        }
       }
-
-      if (random.nextInt(50) <= 3) {
-        query.addFilterQuery("double2_d:[* TO *]");
-      }
-
-      if (random.nextInt(100) == 0) {
-        query.addFilterQuery("-id:[* TO *]");
-      }
+      filterQueries.set(query.getFilterQueries());
     }
+
+    query.setFilterQueries(filterQueries.get());
 
     if (random.nextInt(10) <= 2) {
       query.setFields("id","text3_en");
@@ -176,12 +210,15 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     } else {
       query.setStart(10);
     }
-
     executeQuery(query, result);
 
     result.sampleEnd();
 
     return result;
+  }
+
+  protected Double poissonDelay(double L) {
+    return (Math.log(1.0-Math.random())*-L);
   }
 
   protected void executeQuery(SolrQuery query, SampleResult result) {
@@ -264,7 +301,9 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     String clause = field + ":" + term;
     if (random.nextBoolean())
       clause += "^" + (2 + random.nextInt(100));
-    if (random.nextInt(5) < 3)
+    if (random.nextInt(5) <= 4)
+      clause = "||" + clause;
+    else
       clause = "+" + clause;
 
     return clause;
@@ -374,10 +413,10 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
           try {
             if (fusionAuth) {
               fusionPipelineClient =
-                  new FusionPipelineClient(fusionEndpoints,
-                      params.get("FUSION_USER"),
-                      params.get("FUSION_PASS"),
-                      params.get("FUSION_REALM"));
+                      new FusionPipelineClient(fusionEndpoints,
+                              params.get("FUSION_USER"),
+                              params.get("FUSION_PASS"),
+                              params.get("FUSION_REALM"));
 
             } else {
               fusionPipelineClient = new FusionPipelineClient(fusionEndpoints);
@@ -430,8 +469,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
       if (reporter == null) {
         reporter = ConsoleReporter.forRegistry(metrics)
-            .convertRatesTo(TimeUnit.SECONDS)
-            .convertDurationsTo(TimeUnit.MILLISECONDS).build();
+                .convertRatesTo(TimeUnit.SECONDS)
+                .convertDurationsTo(TimeUnit.MILLISECONDS).build();
         reporter.start(1, TimeUnit.MINUTES);
       }
 
@@ -496,7 +535,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     FieldStatsInfo fsi = qr.getFieldStatsInfo().get(tdtFieldName);
     return new Date[]{(Date)fsi.getMin(), (Date)fsi.getMax()};
   }
-  
+
   protected Map<String, List<String>> buildTermsDictionary(SolrClient solr, int termsLimit) throws Exception {
     Map<String, List<String>> terms = new HashMap<String, List<String>>();
     SolrQuery termsQ = new SolrQuery();

@@ -1203,7 +1203,8 @@ def new_ec2_instances(cluster,
                       skipStores=None,
                       purpose=None,
                       vpcSubnetId=None,
-                      vpcSecurityGroupId=None):
+                      vpcSecurityGroupId=None,
+                      customTags=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1366,6 +1367,10 @@ def new_ec2_instances(cluster,
         purpose = '?unknown?'
     description = 'Launched on '+nowStr+' by '+username+' for '+purpose
 
+    customTagsJson = None
+    if customTags is not None:
+        customTagsJson = json.loads(customTags)
+
     idx = 0
     for inst in rsrv.instances:
         try:
@@ -1375,6 +1380,11 @@ def new_ec2_instances(cluster,
             inst.add_tag('Owner', username)
             inst.add_tag('Description', description)
             inst.add_tag(INSTANCE_STORES_TAG, numStores)
+            if customTagsJson is not None:
+                for tagName, tagValu in customTagsJson.iteritems():
+                    inst.add_tag(tagName, tagValu)
+                    #_info('Added custom tag: %s=%s' % (tagName, tagValu))
+
         except: # catch all exceptions
             e = sys.exc_info()[0]
             _error('Error when tagging instance %s due to: %s ... will retry in 5 seconds ...' % (inst.id, str(e)))
@@ -1385,6 +1395,10 @@ def new_ec2_instances(cluster,
             inst.add_tag('Owner', username)
             inst.add_tag('Description', description)
             inst.add_tag(INSTANCE_STORES_TAG, numStores)
+            if customTagsJson is not None:
+                for tagName, tagValu in customTagsJson.iteritems():
+                    inst.add_tag(tagName, tagValu)
+                    #_info('Added custom tag: %s=%s' % (tagName, tagValu))
         idx += 1
 
 
@@ -1643,7 +1657,7 @@ def cluster_status(cluster, collection=None, shard=None):
     except urllib2.HTTPError as e:
          _error('Cluster status retrieval failed due to: %s' % str(e) + '\n' + e.read())
 
-def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=None, placement_group=None):
+def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=None, placement_group=None, customTags=None):
     """
     Configures, starts, and checks the health of a ZooKeeper ensemble on one or more nodes in a cluster.
 
@@ -1666,7 +1680,7 @@ def new_zk_ensemble(cluster, n=3, instance_type='m3.medium', az=None, placement_
     ''' % (cluster, int(n), instance_type)
     _info(paramReport)
 
-    hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, az=az, placement_group=placement_group)
+    hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, az=az, placement_group=placement_group, customTags=customTags)
     zkHosts = _zk_ensemble(cluster, hosts)
     _info('Successfully launched new ZooKeeper ensemble')
 
@@ -1700,7 +1714,7 @@ def kill(cluster):
     _save_config()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags=None):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
@@ -1736,7 +1750,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if autoConfirm is False and confirm('Verify the parameters. OK to proceed?') is False:
         return
 
-    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose)
+    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose, customTags=customTags)
     hosts = setup_solrcloud(cluster=cluster, zk=zk, zkn=zkn, nodesPerHost=nodesPerHost, yjp_path=yjp_path, solrJavaMemOpts=solrJavaMemOpts)
     solrUrl = 'http://%s:8984/solr/#/' % str(hosts[0])
     _info('Successfully launched new SolrCloud cluster ' + cluster + '; visit: ' + solrUrl)
@@ -1909,7 +1923,7 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
     Demo of all this script's capabilities in one command.
     The result is a SolrCloud cluster with all the fixin's ...
     """
-    ec2hosts = new_ec2_instances(cluster=demoCluster, n=n, instance_type=instance_type)
+    ec2hosts = new_ec2_instances(cluster=demoCluster, n=n, instance_type=instance_type, purpose='sstk demo', customTags='{"CostCenter":"eng"}')
     numHosts = len(ec2hosts)
     # print them out to the console if it is a small number
     if numHosts < 10:
@@ -2912,15 +2926,15 @@ GC_TUNE=(-XX:NewRatio=3 \
     if numConnectorsNodes > len(hosts):
         _fatal('Cannot start more than %d Connectors nodes!' % len(hosts))
 
-    with settings(host_string=host), hide('output', 'running'):
+    with settings(host_string=hosts[0]), hide('output', 'running'):
         run(fusionBin+'/spark-master stop || true')
         _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
         time.sleep(2)
-        _info('Started Spark-Master service on '+host)
+        _info('Started Spark-Master service on '+hosts[0])
         run(fusionBin+'/spark-worker stop || true')
         _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
         time.sleep(2)
-        _info('Started Spark-Worker service on '+host)
+        _info('Started Spark-Worker service on '+hosts[0])
 
     # start additional Spark Workers on all nodes where there will be an API
     if numApiNodes > 1:
@@ -3038,7 +3052,7 @@ def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.1.0'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
-    new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo')
+    new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo',customTags='{"CostCenter":"eng"}')
     deploy_config(cluster,'perf','cloud')
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,api=n)
@@ -3418,7 +3432,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
                   yjp_path=yjp_path_solr,
                   auto_confirm=True,
                   solrJavaMemOpts=solrJavaMemOpts,
-                  purpose='Fusion Performance Testing')
+                  purpose='Fusion Performance Testing',customTags='{"CostCenter":"eng"}')
     _status('SolrCloud cluster provisioned ... deploying the perf config directory to ZK as name: perf')
     deploy_config(cluster,'perf','perf')
     deploy_config(cluster,'perf','perf_js')
