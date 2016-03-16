@@ -414,9 +414,9 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
             if (fusionAuth) {
               fusionPipelineClient =
                       new FusionPipelineClient(fusionEndpoints,
-                              params.get("FUSION_USER"),
-                              params.get("FUSION_PASS"),
-                              params.get("FUSION_REALM"));
+                          params.get("FUSION_USER"),
+                          params.get("FUSION_PASS"),
+                          params.get("FUSION_REALM"));
 
             } else {
               fusionPipelineClient = new FusionPipelineClient(fusionEndpoints);
@@ -469,8 +469,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
       if (reporter == null) {
         reporter = ConsoleReporter.forRegistry(metrics)
-                .convertRatesTo(TimeUnit.SECONDS)
-                .convertDurationsTo(TimeUnit.MILLISECONDS).build();
+            .convertRatesTo(TimeUnit.SECONDS)
+            .convertDurationsTo(TimeUnit.MILLISECONDS).build();
         reporter.start(1, TimeUnit.MINUTES);
       }
 
