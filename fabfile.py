@@ -50,7 +50,7 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_65'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_77'
 _config['solr_tip'] = '${user_home}/solr-5.4.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
@@ -1204,7 +1204,7 @@ def new_ec2_instances(cluster,
                       purpose=None,
                       vpcSubnetId=None,
                       vpcSecurityGroupId=None,
-                      customTags=None):
+                      customTags='{"CostCenter":"eng"}'):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1714,7 +1714,7 @@ def kill(cluster):
     _save_config()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags=None):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags='{"CostCenter":"eng"}'):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
