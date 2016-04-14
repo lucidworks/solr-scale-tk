@@ -3933,3 +3933,27 @@ def set_cluster_buffer_size(cluster,name='default',bufferSize=1000):
     sc = json.loads(searchCluster)
     sc['bufferSize'] = str(bufferSize)
     _fusion_api(hosts[0], 'searchCluster/'+name, 'PUT', json.dumps(sc))
+
+def setup_spark_jdbc_jar(cluster,localJar):
+    jarFile = os.path.expanduser(localJar)
+    if os.path.isfile(jarFile) is False:
+        _fatal('File %s not found on local workstation!' % jarFile)
+
+    lastSlashAt = jarFile.rfind('/')
+    jarFileName = jarFile[lastSlashAt+1:]
+    remoteDir = _env(cluster,'user_home')
+
+    sparkDefaultsConf = """
+spark.driver.extraClassPath        %s/%s
+spark.executor.extraClassPath      %s/%s
+""" % (remoteDir, jarFileName, remoteDir, jarFileName)
+
+    hosts = _lookup_hosts(cluster, False)
+    for host in hosts:
+        with settings(host_string=host):
+            put(jarFile, remoteDir+'/')
+            _fab_append(remoteDir+'/fusion/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
+            run('cd fusion && bin/spark-worker restart')
+    with settings(host_string=hosts[0]):
+        run('cd fusion && bin/spark-master restart')
+
