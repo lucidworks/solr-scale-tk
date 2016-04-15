@@ -2782,7 +2782,6 @@ def _fusion_api(host, apiEndpoint, method='GET', json=None):
         except urllib2.HTTPError as e:
             _error('POST to '+postToApiUrl+' failed due to: '+str(e)+'\n'+e.read())
 
-
     return resp
 
 def fusion_new_search_cluster(cluster, name):
@@ -3934,6 +3933,34 @@ def set_cluster_buffer_size(cluster,name='default',bufferSize=1000):
     sc['bufferSize'] = str(bufferSize)
     _fusion_api(hosts[0], 'searchCluster/'+name, 'PUT', json.dumps(sc))
 
+
+def setup_spark_conf(cluster, executor_mem='4g', max_cores='4', worker_mem='16g', worker_cores='4'):
+    """
+        Setup Spark configuration in Fusion
+    """
+    hosts = _lookup_hosts(cluster, False)
+    _fusion_api(hosts[0], 'configurations/spark.executor.memory', method='POST', json=executor_mem)
+    _fusion_api(hosts[0], 'configurations/spark.worker.memory', method='POST', json=worker_mem)
+    _fusion_api(hosts[0], 'configurations/spark.cores.max', method='POST', json=max_cores)
+
+    sparkEnvConf = """
+export SPARK_WORKER_MEMORY={0}
+export SPARK_WORKER_CORES={1}
+""".format(worker_mem, worker_cores)
+    remoteDir = _env(cluster, 'user_home')
+    hosts = _lookup_hosts(cluster, False)
+    for host in hosts:
+        with settings(host_string=host):
+            _fab_append(remoteDir + "/fusion/apps/spark-dist/conf/spark-env.sh", sparkEnvConf)
+
+def restart_spark(cluster):
+    hosts = _lookup_hosts(cluster)
+    for host in hosts:
+        with settings(host_string=host):
+            run("cd fusion && bin/spark-worker restart && bin/spark-worker status", shell=True, stderr=sys.stdout)
+    with settings(host_string=hosts[0]):
+        run("cd fusion && bin/spark-master restart && bin/spark-master status", shell=True)
+
 def setup_spark_jdbc_jar(cluster,localJar):
     jarFile = os.path.expanduser(localJar)
     if os.path.isfile(jarFile) is False:
@@ -3953,7 +3980,4 @@ spark.executor.extraClassPath      %s/%s
         with settings(host_string=host):
             put(jarFile, remoteDir+'/')
             _fab_append(remoteDir+'/fusion/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
-            run('cd fusion && bin/spark-worker restart')
-    with settings(host_string=hosts[0]):
-        run('cd fusion && bin/spark-master restart')
 
