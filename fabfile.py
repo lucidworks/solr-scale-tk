@@ -1034,10 +1034,15 @@ def _assign_overseer_nodes(hosts, numNodesPerHost, num_overseer_nodes, totalNode
             overseerNodes.add('%s:89%d_solr' % (hosts[oHost], 84 + oPort))
     return overseerNodes
 
-def _estimate_indexing_throughput(cluster, collection):
+def _estimate_indexing_throughput(cluster, collection, usePipeline=False):
     hosts = _lookup_hosts(cluster)
     timestampField = 'indexed_at_tdt'
-    solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
+
+    if usePipeline:
+        solr = pysolr.Solr('http://%s:8765/api/v1/query-pipelines/%s-default/collections/%s' % (hosts[0], collection, collection), timeout=10)
+    else:
+        solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
+
     results = solr.search(timestampField+':[* TO *]', **{'sort':timestampField+' ASC'})
     if results.hits <= 0:
         _error('No results found in Solr!')
@@ -3462,7 +3467,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     if enable_partition is not None:
         enablePartitionFeature = """{
-          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"1DAYS", "maxActivePartitions":1000, "deleteExpired":false
+          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"60DAYS", "maxActivePartitions":1000, "deleteExpired":false, "replicationFactor":1
         }"""
         _fusion_api(hosts[0], 'collections/'+collection+'/features/partitionByTime', 'PUT', enablePartitionFeature)
         _info("Enabled the partitionByTime feature for "+collection)
@@ -3615,11 +3620,11 @@ def fusion_api_up(cluster):
             _info('Fusion API service is NOT responding on '+h)
 
 
-def estimate_indexing_throughput(cluster, collection):
+def estimate_indexing_throughput(cluster, collection, usePipeline=False):
     """
         Estimates the indexing throughput (number of docs per second) after running an indexing job.
     """
-    tp = _estimate_indexing_throughput(cluster, collection)
+    tp = _estimate_indexing_throughput(cluster, collection, usePipeline)
     print('throughput: '+str(tp))
 
 def clear_collection(cluster,collection,deleteByQuery='*:*'):
