@@ -3385,7 +3385,7 @@ def gc_log_analysis_api(cluster):
 
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3459,6 +3459,14 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     collection = 'perf'
 
     fusion_new_collection(cluster,name=collection,rf=2,shards=n,conf='perf')
+
+    if enable_partition is not None:
+        enablePartitionFeature = """{
+          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"1DAYS", "maxActivePartitions":1000, "deleteExpired":false
+        }"""
+        _fusion_api(hosts[0], 'collections/'+collection+'/features/partitionByTime', 'PUT', enablePartitionFeature)
+        _info("Enabled the partitionByTime feature for "+collection)
+
     fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf_js')
 
     perfPipelineDef = """{
