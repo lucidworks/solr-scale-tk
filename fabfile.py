@@ -2933,7 +2933,7 @@ GC_TUNE=(-XX:NewRatio=3 \
     with settings(host_string=hosts[0]), hide('output', 'running'):
         run(fusionBin+'/spark-master stop || true')
         _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-        time.sleep(2)
+        time.sleep(10)
         _info('Started Spark-Master service on '+hosts[0])
         run(fusionBin+'/spark-worker stop || true')
         _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
@@ -2947,8 +2947,13 @@ GC_TUNE=(-XX:NewRatio=3 \
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/spark-worker stop || true')
                 _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-                time.sleep(2)
+                time.sleep(5)
                 _info('Started Spark-Worker service on '+host)
+                run(fusionBin+'/spark-master stop || true')
+                _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+                time.sleep(2)
+                _info('Started Spark-Master service on '+hosts[0])
+
 
     if numApiNodes > 0:
         _status('Starting Fusion API service on %d nodes.' % numApiNodes)
@@ -3319,7 +3324,10 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
     stepName = 'pig-fusion-'+collection+'-'+nowStr
-    pigFile = 's3://solr-scale-tk/pig/'+pig
+    if pig.startswith('s3'):
+        pigFile = pig
+    else:
+        pigFile = 's3://solr-scale-tk/pig/'+pig
 
     hosts = _lookup_hosts(fusionCluster)
 
@@ -3346,7 +3354,7 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
                '-p','FUSION_PASS=password123',
                '-p','FUSION_REALM=native',
                '-p','FUSION_AUTH_ENABLED='+('true' if goThruProxy else 'false'),
-               '-p','SSTK_JAR=s3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar']
+               '-p','SSTK_JAR=s3://sstk-dev/solr-scale-tk-0.1-exe.jar']
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
     try:
@@ -3372,8 +3380,8 @@ def _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster):
     stepStatus = _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs=maxWaitSecs)
     return stepStatus
 
-def _print_step_metrics(cluster, collection):
-    throughput = _estimate_indexing_throughput(cluster, collection)
+def _print_step_metrics(cluster, collection, usePipeline=False):
+    throughput = _estimate_indexing_throughput(cluster, collection, usePipeline)
     _info('Achieved %f docs per second' % throughput)
 
 
@@ -3464,14 +3472,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     collection = 'perf'
 
     fusion_new_collection(cluster,name=collection,rf=2,shards=n,conf='perf')
-
-    if enable_partition is not None:
-        enablePartitionFeature = """{
-          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"60DAYS", "maxActivePartitions":1000, "deleteExpired":false, "replicationFactor":1
-        }"""
-        _fusion_api(hosts[0], 'collections/'+collection+'/features/partitionByTime', 'PUT', enablePartitionFeature)
-        _info("Enabled the partitionByTime feature for "+collection)
-
     fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf_js')
 
     perfPipelineDef = """{
@@ -3580,6 +3580,21 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
             # job completed ...
             _print_step_metrics(cluster, 'perf-solr')
+
+    if enable_partition is not None:
+        _status('Running index perf test with time-based partitioning enabled ...')
+        fusion_new_collection(cluster,name='perf_tp',rf=2,shards=n,conf='perf')
+        enablePartitionFeature = """{
+          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"30DAYS", "maxActivePartitions":1000, "deleteExpired":false
+        }"""
+        _fusion_api(hosts[0], 'collections/perf_tp/features/partitionByTime', 'PUT', enablePartitionFeature)
+        _info("Enabled the partitionByTime feature for perf_tp")
+        stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection='perf_tp',
+                                           pig='s3://sstk-dev/s3_to_fusion.pig',
+                                           region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+        if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
+            # job completed ...
+            _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
 
     # GC log analysis for fusion api service    _info("Starting gc log analysis")
     gc_log_analysis_api(cluster)
@@ -3994,3 +4009,22 @@ spark.executor.extraClassPath      %s/%s
             put(jarFile, remoteDir+'/')
             _fab_append(remoteDir+'/fusion/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
 
+def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', maxWaitSecs=2700):
+    bufferSize = 3000
+    numReducers = 24
+
+    hosts = _lookup_hosts(cluster)
+    _status('Running index perf test with time-based partitioning enabled ...')
+    fusion_new_collection(cluster,name='perf_tp',rf=2,shards=n,conf='perf')
+    enablePartitionFeature = """{
+          "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"30DAYS", "maxActivePartitions":1000, "deleteExpired":false
+        }"""
+    _fusion_api(hosts[0], 'collections/perf_tp/features/partitionByTime', 'PUT', enablePartitionFeature)
+    _info("Enabled the partitionByTime feature for perf_tp")
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection='perf_tp',
+                                       pig='s3://sstk-dev/s3_to_fusion.pig',
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+    emr = boto.emr.connect_to_region(region)
+    if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
+        # job completed ...
+        _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
