@@ -3555,7 +3555,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     numHadoopNodes = 6
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
-    tag_emr_instances(emrCluster,'Fusion Performance Testing',region)
+    tag_emr_instances(emrCluster,'Fusion Performance Testing',region,customTags='{"CostCenter":"eng"}')
     clear_collection(cluster, collection)
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
                                        region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
@@ -3788,7 +3788,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
 
     _info('JARs uploaded and patched successfully.')
     
-def tag_emr_instances(emrCluster,purpose,region='us-east-1'):
+def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
     ec2 = _provider_api()
     username = getpass.getuser()
 
@@ -3803,12 +3803,21 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1'):
 
     byTag = ec2.get_all_instances(filters={'tag:' + 'aws:elasticmapreduce:job-flow-id':job_flow_id})
     idx = 0
+
+    customTagsJson = None
+    if customTags is not None:
+        customTagsJson = json.loads(customTags)
+
     for rsrv in byTag:
         for inst in rsrv.instances:
             try:
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
                 inst.add_tag('Owner', username)
                 inst.add_tag('Description', description)
+                if customTagsJson is not None:
+                    for tagName, tagValu in customTagsJson.iteritems():
+                        inst.add_tag(tagName, tagValu)
+
             except: # catch all exceptions
                 e = sys.exc_info()[0]
                 _error('Error when tagging instance %s due to: %s ... will retry in 5 seconds ...' % (inst.id, str(e)))
@@ -3816,6 +3825,10 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1'):
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
                 inst.add_tag('Owner', username)
                 inst.add_tag('Description', description)
+                if customTagsJson is not None:
+                    for tagName, tagValu in customTagsJson.iteritems():
+                        inst.add_tag(tagName, tagValu)
+
             idx += 1
 
     ec2.close()
