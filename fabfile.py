@@ -3307,7 +3307,7 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
 
     return stepName
 
-def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
+def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3://solr-scale-tk/pig/s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
     """
     Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Fusion.
     """
@@ -3398,7 +3398,7 @@ def gc_log_analysis_api(cluster):
 
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3449,6 +3449,10 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     deploy_config(cluster,'perf','perf')
     deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
+
+    if custom_fusion_path is not None:
+        _custom_fusion_tar(cluster,custom_fusion_path)
+
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
 
     hosts = _lookup_hosts(cluster)
@@ -3570,7 +3574,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, collection)
-        report_fusion_metrics(cluster, collection)
+        #report_fusion_metrics(cluster, collection)
 
     # Solr indexing step
     if index_solr_too:
@@ -4041,3 +4045,38 @@ def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', max
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
+
+def _custom_fusion_tar(cluster,localPath=None):
+
+    if (localPath is None or not(os.path.isfile(localPath)) ):
+        _fatal("Not a valid local fusion path! File not found")
+    else:
+        hosts = _lookup_hosts(cluster)
+        _info("Starting fusion tar upload")
+        for host in hosts:
+            with settings(host_string=host), hide('output', 'running'):
+                _info('Host: ' + host)
+                fusiontarupload = put(localPath,_env(cluster, 'user_home'))
+                if fusiontarupload.succeeded:
+                    path, fname = os.path.split(localPath)
+                    run('rm -rf fusion')
+                    run('tar zxf '+fname)
+
+    _info("Fusion tar upload complete")
+
+def execute_jenkins(clusterId=None,custom_fusion_path=None):
+    sstk_cfg = {}
+    sstk_cfg['clusters'] = {}
+    sstk_cfg['clusters'][clusterId] = {'AWS_AZ': 'us-east-1d','AWS_HVM_AMI_ID': 'ami-251d034f','AWS_SECURITY_GROUP': 'sg-e1031687','vpc_security_group_id': 'sg-e1031687','vpc_subnetid': 'subnet-2942a271'}
+    _config['sstk_cfg'] = sstk_cfg
+    _save_config()
+    fusion_perf_test(clusterId,custom_fusion_path=custom_fusion_path)
+    print estimate_indexing_throughput(clusterId,"perf")
+    cloud = _provider_api(cluster)
+    username = getpass.getuser()
+    my_instances = _find_user_instances(cloud, username)
+    instance_ids = my_instances.keys()
+    if len(instance_ids) > 0:
+        cloud.terminate_instances(instance_ids)
+    time.sleep(2)
+    cloud.close()
