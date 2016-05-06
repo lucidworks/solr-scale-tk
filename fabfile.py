@@ -265,6 +265,16 @@ def _find_all_instances(cloud, onlyIfRunning=True):
 
     return tagged
 
+def _find_user_instances_in_cluster(cloud, cluster, username, onlyIfRunning=True):
+    tagged = {}
+    byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:clusterId, 'tag:' + USERNAME_TAG:username})
+    for rsrv in byTag:
+        for inst in rsrv.instances:
+            if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
+                tagged[inst.id] = inst.public_dns_name
+
+    return tagged
+
 
 def _find_user_instances(cloud, username, onlyIfRunning=True):
     tagged = {}
@@ -314,6 +324,18 @@ def _ssh_to_new_instance(host):
             sshOk = False
 
     return sshOk
+
+def _cluster_instances(cloud, cluster):
+    clusterinstances = None
+    sstkCfg = _get_config()
+    if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster):
+        if sstkCfg['clusters'][cluster].has_key('instances'):
+            clusterinstances = sstkCfg['clusters'][cluster]['instances']
+
+    if clusterinstances is None:
+        clusterinstances = _find_instances_in_cluster(cloud, cluster)
+
+    return clusterinstances
 
 def _cluster_hosts(cloud, cluster):
 
@@ -1363,7 +1385,12 @@ def new_ec2_instances(cluster,
                          security_group_ids=[vpcSecurityGroupId])
     
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
-    
+
+    # Get the instance id's and store it in SSTK config
+    instances = []
+    for instance in rsrv.instances:
+        instances.append(instance.id)
+
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
@@ -1434,7 +1461,7 @@ def new_ec2_instances(cluster,
     if sstk_cfg.has_key('clusters') is False:
         sstk_cfg['clusters'] = {}
 
-    sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username }
+    sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username, 'instances': instances }
     _save_config()
 
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
@@ -4065,18 +4092,40 @@ def _custom_fusion_tar(cluster,localPath=None):
     _info("Fusion tar upload complete")
 
 def execute_jenkins(clusterId=None,custom_fusion_path=None):
+    # To do - config can be parametrized
     sstk_cfg = {}
     sstk_cfg['clusters'] = {}
     sstk_cfg['clusters'][clusterId] = {'AWS_AZ': 'us-east-1d','AWS_HVM_AMI_ID': 'ami-251d034f','AWS_SECURITY_GROUP': 'sg-e1031687','vpc_security_group_id': 'sg-e1031687','vpc_subnetid': 'subnet-2942a271'}
     _config['sstk_cfg'] = sstk_cfg
     _save_config()
-    fusion_perf_test(clusterId,custom_fusion_path=custom_fusion_path)
+    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path)
     print estimate_indexing_throughput(clusterId,"perf")
-    cloud = _provider_api(cluster)
-    username = getpass.getuser()
-    my_instances = _find_user_instances(cloud, username)
-    instance_ids = my_instances.keys()
+
+def clean_instances_from_config(clusterId=None):
+    sstk_cfg = _get_config()
+    cloud = _provider_api(clusterId)
+    instance_ids = _cluster_instances(cloud, clusterId)
     if len(instance_ids) > 0:
         cloud.terminate_instances(instance_ids)
+        _info("Instances are terminated!")
+        # update the local config to remove this cluster
+        sstk_cfg['clusters'].pop(clusterId, None)
+        _save_config()
+    else:
+        _info('No instances found in the config')
+    time.sleep(2)
+    cloud.close()
+
+def clean_instances_user_cluster(clusterId=None, username=getpass.getuser()):
+    cloud = _provider_api(clusterId)
+    instance_ids = _find_user_instances_in_cluster(cloud,clusterId,username)
+    if len(instance_ids) > 0:
+        cloud.terminate_instances(instance_ids)
+        _info("Instances are terminated!")
+        # update the local config to remove this cluster
+        sstk_cfg['clusters'].pop(clusterId, None)
+        _save_config()
+    else:
+        _info('No instances found in the config')
     time.sleep(2)
     cloud.close()
