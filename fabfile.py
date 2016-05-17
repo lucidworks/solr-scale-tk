@@ -4106,7 +4106,11 @@ def clean_instances_from_config(clusterId=None):
     cloud = _provider_api(clusterId)
     instance_ids = _cluster_instances(cloud, clusterId)
     if len(instance_ids) > 0:
-        cloud.terminate_instances(instance_ids)
+        all_instances = cloud.get_only_instances(instance_ids)
+        for instance in all_instances:
+            if (instance.state == 'running'):
+                _info("Terminating instance:" + instance.id )
+                cloud.terminate_instances([instance.id])
         _info("Instances are terminated!")
         # update the local config to remove this cluster
         sstk_cfg['clusters'].pop(clusterId, None)
