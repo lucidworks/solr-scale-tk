@@ -265,6 +265,7 @@ def _find_all_instances(cloud, onlyIfRunning=True):
 
     return tagged
 
+
 def _find_user_instances(cloud, username, onlyIfRunning=True):
     tagged = {}
     byTag = cloud.get_all_instances(filters={'tag:' + USERNAME_TAG:username})
