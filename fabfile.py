@@ -265,17 +265,6 @@ def _find_all_instances(cloud, onlyIfRunning=True):
 
     return tagged
 
-def _find_user_instances_in_cluster(cloud, cluster, username, onlyIfRunning=True):
-    tagged = {}
-    byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:clusterId, 'tag:' + USERNAME_TAG:username})
-    for rsrv in byTag:
-        for inst in rsrv.instances:
-            if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
-                tagged[inst.id] = inst.public_dns_name
-
-    return tagged
-
-
 def _find_user_instances(cloud, username, onlyIfRunning=True):
     tagged = {}
     byTag = cloud.get_all_instances(filters={'tag:' + USERNAME_TAG:username})
@@ -324,18 +313,6 @@ def _ssh_to_new_instance(host):
             sshOk = False
 
     return sshOk
-
-def _cluster_instances(cloud, cluster):
-    clusterinstances = None
-    sstkCfg = _get_config()
-    if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster):
-        if sstkCfg['clusters'][cluster].has_key('instances'):
-            clusterinstances = sstkCfg['clusters'][cluster]['instances']
-
-    if clusterinstances is None:
-        clusterinstances = _find_instances_in_cluster(cloud, cluster)
-
-    return clusterinstances
 
 def _cluster_hosts(cloud, cluster):
 
@@ -1386,11 +1363,6 @@ def new_ec2_instances(cluster,
     
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
 
-    # Get the instance id's and store it in SSTK config
-    instances = []
-    for instance in rsrv.instances:
-        instances.append(instance.id)
-
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
@@ -1461,7 +1433,6 @@ def new_ec2_instances(cluster,
     if sstk_cfg.has_key('clusters') is False:
         sstk_cfg['clusters'] = {}
 
-    sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username, 'instances': instances }
     _save_config()
 
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
@@ -3425,7 +3396,7 @@ def gc_log_analysis_api(cluster):
 
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3476,9 +3447,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     deploy_config(cluster,'perf','perf')
     deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
-
-    if custom_fusion_path is not None:
-        _custom_fusion_tar(cluster,custom_fusion_path)
 
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
 
@@ -3601,7 +3569,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, collection)
-        #report_fusion_metrics(cluster, collection)
+        report_fusion_metrics(cluster, collection)
 
     # Solr indexing step
     if index_solr_too:
@@ -4072,64 +4040,3 @@ def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', max
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
-
-def _custom_fusion_tar(cluster,localPath=None):
-
-    if (localPath is None or not(os.path.isfile(localPath)) ):
-        _fatal("Not a valid local fusion path! File not found")
-    else:
-        hosts = _lookup_hosts(cluster)
-        _info("Starting fusion tar upload")
-        for host in hosts:
-            with settings(host_string=host), hide('output', 'running'):
-                _info('Host: ' + host)
-                fusiontarupload = put(localPath,_env(cluster, 'user_home'))
-                if fusiontarupload.succeeded:
-                    path, fname = os.path.split(localPath)
-                    run('rm -rf fusion')
-                    run('tar zxf '+fname)
-
-    _info("Fusion tar upload complete")
-
-def execute_jenkins(clusterId=None,custom_fusion_path=None):
-    # To do - config can be parametrized
-    sstk_cfg = {}
-    sstk_cfg['clusters'] = {}
-    sstk_cfg['clusters'][clusterId] = {'AWS_AZ': 'us-east-1d','AWS_HVM_AMI_ID': 'ami-251d034f','AWS_SECURITY_GROUP': 'sg-e1031687','vpc_security_group_id': 'sg-e1031687','vpc_subnetid': 'subnet-2942a271'}
-    _config['sstk_cfg'] = sstk_cfg
-    _save_config()
-    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path)
-    print estimate_indexing_throughput(clusterId,"perf")
-
-def clean_instances_from_config(clusterId=None):
-    sstk_cfg = _get_config()
-    cloud = _provider_api(clusterId)
-    instance_ids = _cluster_instances(cloud, clusterId)
-    if len(instance_ids) > 0:
-        all_instances = cloud.get_only_instances(instance_ids)
-        for instance in all_instances:
-            if (instance.state == 'running'):
-                _info("Terminating instance:" + instance.id )
-                cloud.terminate_instances([instance.id])
-        _info("Instances are terminated!")
-        # update the local config to remove this cluster
-        sstk_cfg['clusters'].pop(clusterId, None)
-        _save_config()
-    else:
-        _info('No instances found in the config')
-    time.sleep(2)
-    cloud.close()
-
-def clean_instances_user_cluster(clusterId=None, username=getpass.getuser()):
-    cloud = _provider_api(clusterId)
-    instance_ids = _find_user_instances_in_cluster(cloud,clusterId,username)
-    if len(instance_ids) > 0:
-        cloud.terminate_instances(instance_ids)
-        _info("Instances are terminated!")
-        # update the local config to remove this cluster
-        sstk_cfg['clusters'].pop(clusterId, None)
-        _save_config()
-    else:
-        _info('No instances found in the config')
-    time.sleep(2)
-    cloud.close()
