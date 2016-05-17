@@ -1434,6 +1434,7 @@ def new_ec2_instances(cluster,
     if sstk_cfg.has_key('clusters') is False:
         sstk_cfg['clusters'] = {}
 
+    sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username }
     _save_config()
 
     _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
@@ -3448,7 +3449,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     deploy_config(cluster,'perf','perf')
     deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
-
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
 
     hosts = _lookup_hosts(cluster)
