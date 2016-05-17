@@ -3306,7 +3306,7 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
 
     return stepName
 
-def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3://solr-scale-tk/pig/s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
+def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
     """
     Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Fusion.
     """
