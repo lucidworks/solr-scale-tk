@@ -1363,7 +1363,7 @@ def new_ec2_instances(cluster,
                          security_group_ids=[vpcSecurityGroupId])
     
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
-
+    
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
