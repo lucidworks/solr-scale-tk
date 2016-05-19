@@ -25,6 +25,7 @@ import dateutil.parser
 import shutil
 import socket
 import boto.vpc
+import boto3
 
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
@@ -3186,7 +3187,7 @@ def new_placement_group(cluster, name):
     if cluster.create_placement_group(name):
 	    _info('New placement group ' + name + ' created')
 
-def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
+def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600, customTags= []):
     """
     Provisions a new Elastic MapReduce cluster.
     """
@@ -3201,6 +3202,7 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
     steps = [pigStep]
 
     emr = boto.emr.connect_to_region(region)
+    client = boto3.client('emr',region_name=region)
 
     # NOTE: since we're provisioning expensive resources here, I'm not going to try to be robust and catch errors
     # and retry as I don't want false positives to lead to multiple clusters being provisioned without the user
@@ -3209,24 +3211,28 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
         subnetid = _resolve_vpc_subnetid(cluster, availability_zone)
     dict_subnet = {"Instances.Ec2SubnetId":subnetid}
     _info('Launching EMR cluster '+cluster+' in VPC subnet '+subnetid)
-    job_flow_id = emr.run_jobflow(cluster,
-                log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
-                master_instance_type='m3.xlarge',
-                slave_instance_type=slave_instance_type,
-                ec2_keyname=keyname,
-                num_instances=int(num)+1,
-                ami_version='3.6.0',
-                keep_alive=keep_alive,
-                steps=steps,
-                enable_debugging=True,
-                action_on_failure='CONTINUE',
-                job_flow_role='EMR_EC2_DefaultRole',
-                service_role='EMR_DefaultRole',
-                api_params = dict_subnet)
-
+    job_flow_id_boto3 = client.run_job_flow(Name=cluster,
+                LogUri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
+                AmiVersion='3.6.0',
+                Instances={
+                'MasterInstanceType':'m3.xlarge',
+                'SlaveInstanceType':slave_instance_type,
+                'Ec2KeyName':keyname,
+                'InstanceCount':int(num)+1,
+                'Ec2SubnetId':subnetid,
+                'TerminationProtected': False,
+                'KeepJobFlowAliveWhenNoSteps':keep_alive,
+                'HadoopVersion':'2.4.0'},
+                VisibleToAllUsers=True,
+                JobFlowRole='EMR_EC2_DefaultRole',
+                ServiceRole='EMR_DefaultRole',
+                Tags=json.loads(customTags)
+                )
+    job_flow_id = job_flow_id_boto3['JobFlowId']
+    emr.add_jobflow_steps(job_flow_id,steps)
     # This is needed to workaround a bug where failed steps cause the cluster to
     # shutdown prematurely (preventing diagnosis of the cause of the failure)
-    emr.set_termination_protection(job_flow_id, True)
+    #emr.set_termination_protection(job_flow_id, True)
 
     _info('launched job_flow_id: %s, waiting up to %d secs to see it RUNNING' % (job_flow_id, maxWait))
 
@@ -3263,6 +3269,7 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
         _error('Wait to see cluster '+cluster+' ('+job_flow_id+
                ') in RUNNING state timed out after %d seconds!' % (maxWait))
 
+
     # Save the Job Flow ID for lookup
     sstk_cfg = _get_config()
     if sstk_cfg.has_key('emr') is False:
@@ -3271,6 +3278,9 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
         sstk_cfg['emr'][cluster] = {}
     sstk_cfg['emr'][cluster]['job_flow_id'] = job_flow_id
     _save_config()
+
+    # Tag instances
+    tag_emr_instances(cluster, 'Fusion Performance Testing', region)
 
 
 def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-east-1'):
@@ -3425,7 +3435,7 @@ def gc_log_analysis_api(cluster):
 
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None, gcloganalysis = True):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3585,8 +3595,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     #Fusion indexing step
     numHadoopNodes = 6
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
-    emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
-    tag_emr_instances(emrCluster,'Fusion Performance Testing',region,customTags='{"CostCenter":"eng"}')
+    emr_new_cluster(emrCluster,region=region,num=numHadoopNodes,customTags='[{"Key":"CostCenter","Value":"eng"}]')
+    tag_emr_instances(emrCluster,'Fusion Performance Testing',region)
     clear_collection(cluster, collection)
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
                                        region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
@@ -3628,7 +3638,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
             _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
 
     # GC log analysis for fusion api service    _info("Starting gc log analysis")
-    gc_log_analysis_api(cluster)
+    if gcloganalysis:
+        gc_log_analysis_api(cluster)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
@@ -3819,7 +3830,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
 
     _info('JARs uploaded and patched successfully.')
     
-def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
+def tag_emr_instances(emrCluster,purpose,region='us-east-1'):
     ec2 = _provider_api()
     username = getpass.getuser()
 
@@ -3835,19 +3846,12 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
     byTag = ec2.get_all_instances(filters={'tag:' + 'aws:elasticmapreduce:job-flow-id':job_flow_id})
     idx = 0
 
-    customTagsJson = None
-    if customTags is not None:
-        customTagsJson = json.loads(customTags)
-
     for rsrv in byTag:
         for inst in rsrv.instances:
             try:
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
                 inst.add_tag('Owner', username)
                 inst.add_tag('Description', description)
-                if customTagsJson is not None:
-                    for tagName, tagValu in customTagsJson.iteritems():
-                        inst.add_tag(tagName, tagValu)
 
             except: # catch all exceptions
                 e = sys.exc_info()[0]
@@ -3856,9 +3860,6 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
                 inst.add_tag('Owner', username)
                 inst.add_tag('Description', description)
-                if customTagsJson is not None:
-                    for tagName, tagValu in customTagsJson.iteritems():
-                        inst.add_tag(tagName, tagValu)
 
             idx += 1
 
@@ -4098,8 +4099,10 @@ def execute_jenkins(clusterId=None,custom_fusion_path=None):
     sstk_cfg['clusters'][clusterId] = {'AWS_AZ': 'us-east-1d','AWS_HVM_AMI_ID': 'ami-251d034f','AWS_SECURITY_GROUP': 'sg-e1031687','vpc_security_group_id': 'sg-e1031687','vpc_subnetid': 'subnet-2942a271'}
     _config['sstk_cfg'] = sstk_cfg
     _save_config()
-    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path)
+    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path,index_solr_too =True,gcloganalysis=False)
+    #gc_log_analysis_api(clusterId)
     print estimate_indexing_throughput(clusterId,"perf")
+    print estimate_indexing_throughput(clusterId,"perf-solr")
 
 def clean_instances_from_config(clusterId=None):
     sstk_cfg = _get_config()
