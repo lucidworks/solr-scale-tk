@@ -26,7 +26,7 @@ import shutil
 import socket
 import boto.vpc
 import boto3
-
+import csv
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
 CLUSTER_TAG = 'cluster'
@@ -1056,6 +1056,16 @@ def _assign_overseer_nodes(hosts, numNodesPerHost, num_overseer_nodes, totalNode
             # _info('Using host: %d and port: 89%d as overseer' % (oHost, 84 + oPort))
             overseerNodes.add('%s:89%d_solr' % (hosts[oHost], 84 + oPort))
     return overseerNodes
+
+
+def _get_num_docs(cluster, collection, usePipeline=False):
+    hosts = _lookup_hosts(cluster)
+    if usePipeline:
+        solr = pysolr.Solr('http://%s:8765/api/v1/query-pipelines/%s-default/collections/%s' % (hosts[0], collection, collection), timeout=10)
+    else:
+        solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
+    results = solr.search('*:*')
+    return results.hits
 
 def _estimate_indexing_throughput(cluster, collection, usePipeline=False):
     hosts = _lookup_hosts(cluster)
@@ -2723,6 +2733,17 @@ def clusterprop(cluster, name, value):
         _error('Cluster property could not be set due to: %s' % str(e) + '\n' + e.read())
         return False
 
+def _get_solr_version(cluster):
+    hosts = _lookup_hosts(cluster, False)
+    solrVersion = 'http://%s:8984/solr/admin/info/system?wt=json' % (hosts[0])
+    try:
+        response = urllib2.urlopen(solrVersion)
+        solr_resp = json.loads(response.read())
+        return str(solr_resp['lucene']['solr-spec-version'])
+    except urllib2.HTTPError as e:
+        _error('Failed to get solr Response' % str(e) + '\n' + e.read())
+        return ''
+
 def stats(cluster):
     """
     Get cluster stats such as collections, total docs, replicas/node, replicas/host etc
@@ -3435,7 +3456,7 @@ def gc_log_analysis_api(cluster):
 
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None, gcloganalysis = True):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None, custom_fusion_path = None, gcloganalysis = True, createResultsCSV=False):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3592,6 +3613,10 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     emrCluster = cluster+'EMR'
     _status('Provisioning Elastic MapReduce (EMR) cluster named: '+emrCluster)
 
+    # Details for metrics collection
+    usedFusionVersion = _fusion_api(hosts[0],'configurations/app.version')
+    usedSolrVersion = _get_solr_version(cluster)
+
     #Fusion indexing step
     numHadoopNodes = 6
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
@@ -3640,6 +3665,15 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     # GC log analysis for fusion api service    _info("Starting gc log analysis")
     if gcloganalysis:
         gc_log_analysis_api(cluster)
+
+    # Write the metrics to a CSV file - mainly useful for the scheduled jenkins job
+    if createResultsCSV:
+        resultsHeader = ['Date','Collection','Num Shards','Replication Factor','Num Docs','Throughput','Instance Type','Concurrent clients (num reducers)','Batch size','Num nodes','Fusion version','Solr version']
+        resultsValues = []
+        resultsValues.append([time.strftime("%d/%m/%Y"),collection,n,2,_get_num_docs(cluster,collection,usePipeline=True),_estimate_indexing_throughput(cluster,collection,usePipeline=True), instance_type, numReducers, bufferSize, n, usedFusionVersion, usedSolrVersion])
+        if index_solr_too:
+            resultsValues.append([time.strftime("%d/%m/%Y"),'perf-solr',n,2,_get_num_docs(cluster,'perf-solr'),_estimate_indexing_throughput(cluster,'perf-solr'), instance_type, numReducers, bufferSize, n, '', usedSolrVersion])
+        write_metrics_csv(resultsHeader, resultsValues)
 
     if keepRunning:
         _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
@@ -4099,10 +4133,7 @@ def execute_jenkins(clusterId=None,custom_fusion_path=None):
     sstk_cfg['clusters'][clusterId] = {'AWS_AZ': 'us-east-1d','AWS_HVM_AMI_ID': 'ami-251d034f','AWS_SECURITY_GROUP': 'sg-e1031687','vpc_security_group_id': 'sg-e1031687','vpc_subnetid': 'subnet-2942a271'}
     _config['sstk_cfg'] = sstk_cfg
     _save_config()
-    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path,index_solr_too =True,gcloganalysis=False)
-    #gc_log_analysis_api(clusterId)
-    print estimate_indexing_throughput(clusterId,"perf")
-    print estimate_indexing_throughput(clusterId,"perf-solr")
+    fusion_perf_test(clusterId,keepRunning=True,custom_fusion_path=custom_fusion_path,index_solr_too =True,gcloganalysis=False, createResultsCSV =True)
 
 def clean_instances_from_config(clusterId=None):
     sstk_cfg = _get_config()
@@ -4136,3 +4167,11 @@ def clean_instances_user_cluster(clusterId=None, username=getpass.getuser()):
         _info('No instances found in the config')
     time.sleep(2)
     cloud.close()
+
+def write_metrics_csv(headerList=[],rowvalueList=[]):
+    myfile = open('metrics.csv', 'wb')
+    wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
+    wr.writerow(headerList)
+    for row in rowvalueList:
+        wr.writerow(row)
+    myfile.close()
