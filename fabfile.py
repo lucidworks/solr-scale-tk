@@ -51,7 +51,7 @@ _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
 _config['solr_java_home'] = '${user_home}/jdk1.8.0_77'
-_config['solr_tip'] = '${user_home}/solr-5.4.1'
+_config['solr_tip'] = '${user_home}/solr-5.5.1'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -2811,7 +2811,7 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
-def fusion_start(cluster,api=None,ui=1,connectors=1,yjp_path=None,apiJavaMem=None):
+def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,apiJavaMem=None):
     """
     Start Fusion services across the specified cluster.
 
@@ -2930,30 +2930,26 @@ GC_TUNE=(-XX:NewRatio=3 \
     if numConnectorsNodes > len(hosts):
         _fatal('Cannot start more than %d Connectors nodes!' % len(hosts))
 
-    with settings(host_string=hosts[0]), hide('output', 'running'):
-        run(fusionBin+'/spark-master stop || true')
-        _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-        time.sleep(10)
-        _info('Started Spark-Master service on '+hosts[0])
-        run(fusionBin+'/spark-worker stop || true')
-        _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-        time.sleep(2)
-        _info('Started Spark-Worker service on '+hosts[0])
+    numSparkMasterNodes = int(smasters)
+    if numSparkMasterNodes > len(hosts):
+        _fatal('Cannot start more than %d Spark master nodes!' % len(hosts))
 
-    # start additional Spark Workers on all nodes where there will be an API
-    if numApiNodes > 1:
-        _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-        for host in hosts[1:numApiNodes]:
-            with settings(host_string=host), hide('output', 'running'):
-                run(fusionBin+'/spark-worker stop || true')
-                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-                time.sleep(5)
-                _info('Started Spark-Worker service on '+host)
-                run(fusionBin+'/spark-master stop || true')
-                _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-                time.sleep(2)
-                _info('Started Spark-Master service on '+hosts[0])
+    _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
+    for host in hosts[0:numSparkMasterNodes]:
+        with settings(host_string=host), hide('output', 'running'):
+            run(fusionBin+'/spark-master stop || true')
+            _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+            time.sleep(2)
+            _info('Started Spark Master service on '+host)
 
+    # start Spark Workers on all nodes where there will be an API
+    _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
+    for host in hosts[0:numApiNodes]:
+        with settings(host_string=host), hide('output', 'running'):
+            run(fusionBin+'/spark-worker stop || true')
+            _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+            time.sleep(2)
+            _info('Started Spark-Worker service on '+host)
 
     if numApiNodes > 0:
         _status('Starting Fusion API service on %d nodes.' % numApiNodes)
