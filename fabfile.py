@@ -750,7 +750,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
             showWarn = True
             mx = '3g'
     elif instance_type == 'r3.2xlarge':
-        mx = '12g'
+        mx = '16g'
     elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
@@ -1832,6 +1832,10 @@ def mine(user=None):
         if usertag is None:
             usertag = '?user?'
 
+        nameTag = inst.__dict__['tags']['Name']
+        if nameTag is None:
+            nameTag = '?'
+
         if byUser.has_key(usertag) is False:
             byUser[usertag] = {}
         
@@ -1846,8 +1850,8 @@ def mine(user=None):
 
         if inst.launch_time:
             upTime = _uptime(inst.launch_time)
-            clusters[cluster].append('%s: %s (%s %s%s)' %
-              (inst.public_dns_name, key, inst.instance_type, inst.state, upTime))
+            clusters[cluster].append('%s: %s / %s / %s (%s %s%s)' %
+              (inst.public_dns_name, key, inst.private_ip_address, nameTag, inst.instance_type, inst.state, upTime))
 
         clusterList.append(cluster)
 

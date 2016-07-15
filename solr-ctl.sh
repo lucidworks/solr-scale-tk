@@ -103,6 +103,10 @@ if [ "$MODE" == "setup" ]; then
   if [ -d /vol0/cloud84 ]; then
     CLOUD_84="/vol0/cloud84"
   fi  
+
+  if [ ! -d "$CLOUD_84/logs" ]; then
+    mkdir -p $CLOUD_84/logs
+  fi
   
   # the AMI only has the cloud84 directory in place
   # clone it for any others and put on a dedicated disk if avail
