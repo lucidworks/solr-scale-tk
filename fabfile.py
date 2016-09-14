@@ -3105,7 +3105,7 @@ def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusio
     solrTip = ('%s/solr-%s' % (localTip, solrVers))
     if os.path.isdir(solrTip) is False:
         solrTgz = 'solr-'+solrVers+'.tgz'
-        solrDownloadUrl = 'http://apache.cs.utah.edu/lucene/solr/'+solrVers+'/'+solrTgz
+        solrDownloadUrl = 'http://archive.apache.org/dist/lucene/solr/'+solrVers+'/'+solrTgz
         solrLocalTgz = localTip+'/'+solrTgz
         if os.path.isfile(solrLocalTgz) is False:
             _status('Downloading Solr '+solrVers)
