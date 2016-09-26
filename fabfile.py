@@ -31,7 +31,6 @@ import boto.vpc
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_PV_AMI_ID = 'ami-5d126438'
 AWS_HVM_AMI_ID = 'ami-7b28466c'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'r3.large'
@@ -57,7 +56,6 @@ _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
 _config['SSTK_ENV'] = '${sstk_cloud_dir}/' + ENV_SCRIPT
 _config['SSTK'] = '${sstk_cloud_dir}/' + CTL_SCRIPT
-_config['AWS_PV_AMI_ID'] = AWS_PV_AMI_ID
 _config['AWS_HVM_AMI_ID'] = AWS_HVM_AMI_ID
 _config['AWS_AZ'] = AWS_AZ
 _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
@@ -65,8 +63,9 @@ _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion'
 
-instanceStoresByType = { 'm1.small':0, 'm3.medium':1, 'm3.medium':1, 'm3.large':1, 'm3.xlarge':2,
-                        'm3.2xlarge':2, 'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
+instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
+                        'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
+                        'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
                         'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2 }
 
 class _HeadRequest(urllib2.Request):
@@ -1241,8 +1240,11 @@ def new_ec2_instances(cluster,
     if instance_type is None:
         instance_type = _env(cluster, 'AWS_INSTANCE_TYPE')
 
+    if instance_type.startswith('m1.'):
+        _fatal(instance_type+" instances are not supported anymore!")
+
     if ami is None:
-        ami = _env(cluster, 'AWS_PV_AMI_ID')
+        ami = _env(cluster, 'AWS_HVM_AMI_ID')
 
     if key is None:
         key = _env(cluster, 'AWS_KEY_NAME')
@@ -1307,10 +1309,7 @@ def new_ec2_instances(cluster,
 
     # TODO: this is hacktastic! Need a mapping from /dev/sd# to /dev/xvd#
     devs = ['sdb','sdc','sdd','sde']
-    xdevs = ['xvdf','xvdg','xvdh','xvdi']
-    
-    if ami == hvmAmiId:
-        xdevs = ['xvdb','xvdc','xvdd','xvde']
+    xdevs = ['xvdb','xvdc','xvdd','xvde']
 
     bdm = None   
     if setupInstanceStores is True and numStores > 0:
@@ -1419,7 +1418,7 @@ def new_ec2_instances(cluster,
 
     # don't return from this operation until we can SSH into each node
     # and some hvm (esp the larger instance types) can take longer to provision
-    waitSecs = 360 if ami == hvmAmiId else 180
+    waitSecs = 360
     if _verify_ssh_connectivity(hosts, waitSecs) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
 
