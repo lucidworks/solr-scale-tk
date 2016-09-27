@@ -48,13 +48,13 @@ $ cat ~/.ssh/id_dsa.pub >> ~/.ssh/authorized_keys
 For instance:
 
 ```
-fab setup_local:local,~/dev/lucidworks,fusionVers=1.1.2
+fab setup_local:local,~/dev/lucidworks,fusionVers=2.4.2
 ```
 
-This task will download Solr (4.10.2), ZooKeeper (3.4.6), and Fusion (1.1.2) and install them to a local path provided as a task parameter (~/dev/lucidworks). Specifically, you'll end up having:
+This task will download Solr (5.5.2), ZooKeeper (3.4.6), and Fusion (2.4.2) and install them to a local path provided as a task parameter (~/dev/lucidworks). Specifically, you'll end up having:
 
 ```
-~/dev/lucidworks/solr-4.10.2
+~/dev/lucidworks/solr-5.5.2
 ~/dev/lucidworks/zookeeper-3.4.6
 ~/dev/lucidworks/fusion
 ```
@@ -82,7 +82,7 @@ The "local" cluster definition is saved to ~/.sstk file as JSON:
       "zk_data_dir": "${zk_home}/data",
       "instance_type": "m3.large",
       "sstk_cloud_dir": "${user_home}/cloud",
-      "solr_tip": "${user_home}/solr-4.10.2",
+      "solr_tip": "${user_home}/solr-5.5.2",
       "fusion_home": "${user_home}/fusion"
     }
   }
@@ -149,15 +149,15 @@ You can name the security group and keypair whatever you want, however if you ch
 Using the US West (N. California) Region
 --------
 
-By default, the toolkit launches instances in the us-east-1 region (N. Virginia). If you want to launch in the us-west-1 region (N. California), then you need to override a few properties in your ~/.sstk file:
+By default, the toolkit launches instances in the us-east-1 region (N. Virginia). If you want to launch in the us-west-2 region (Oregon), then you need to override a few properties in your ~/.sstk file:
 
 ```
-"region": "us-west-1"
-"AWS_AZ":"us-west-1b",
-"AWS_HVM_AMI_ID":"ami-ebec998b"
+"region": "us-west-2"
+"AWS_AZ":"us-west-2b",
+"AWS_HVM_AMI_ID":"ami-c20ad5a2"
 ```
 
-You'll also need to ensure the security group / keypair exist in the us-west-1 region as these are not visible across regions. In other words, if you created the security group / keypair in the us-east-1 region, and then moved to the west, then you'll need to re-create the security group / keypairs.
+You'll also need to ensure the security group / keypair exist in the us-west-2 region as these are not visible across regions. In other words, if you created the security group / keypair in the us-east-1 region, and then moved to the west, then you'll need to re-create the security group / keypairs.
 
 Overview
 ========

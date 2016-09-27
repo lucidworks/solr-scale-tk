@@ -23,7 +23,6 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.commons.math3.distribution.NormalDistribution;
 
 public class QuerySampler extends AbstractJavaSamplerClient implements Serializable {
   private static final long serialVersionUID = 1L;
@@ -44,6 +43,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
   private static CloudSolrClient cloudSolrClient = null;
   private static Map<String, List<String>> termsDict = null;
   private static FusionPipelineClient fusionPipelineClient = null;
+  private static String fusionQueryPipelinePath;
+  private static String fusionHostList;
   private static boolean useFusion = false;
 
   private static long minDate;
@@ -92,9 +93,9 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     if (random.nextBoolean())
       randomQuery.append(getTermClause("string2_s")).append(" ");
     if (random.nextBoolean())
-      randomQuery.append(getTermClause("text1_en")).append(" ");
+      randomQuery.append(getTermClause("text1_txt_en")).append(" ");
     if (random.nextBoolean())
-      randomQuery.append(getTermClause("text3_en")).append(" ");
+      randomQuery.append(getTermClause("text3_txt_en")).append(" ");
 
     if (random.nextBoolean())
       randomQuery.append("boolean1_b:true").append(" ");
@@ -138,7 +139,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     }
 
     if (random.nextInt(10) <= 2) {
-      query.setFields("id","text3_en");
+      query.setFields("id","text3_txt_en");
     }
 
     if (random.nextInt(5) < 3) {
@@ -189,7 +190,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     long qTime = 0;
     boolean timerStopped = false;
     try {
-      QueryResponse qr = useFusion ? fusionPipelineClient.queryFusion(query) : cloudSolrClient.query(query);
+      QueryResponse qr = useFusion ? fusionPipelineClient.queryFusion(fusionQueryPipelinePath, query) : cloudSolrClient.query(query);
       qTime = queryTimerCtxt.stop();
       timerStopped = true;
       qTimeTimer.update(qr.getQTime(), TimeUnit.MILLISECONDS);
@@ -211,7 +212,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
       result.setResponseOK();
     } catch (Exception solrExc) {
-      log.error("Failed to execute query ["+query.toString()+"] due to: "+solrExc);
+      log.error("Failed to execute query ["+query.toString()+"] due to: "+solrExc, solrExc);
       excCounter.inc();
     } finally {
       if (!timerStopped) {
@@ -316,7 +317,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     defaultParameters.addArgument("SLOW_QUERY_THRESHOLD_MS", "150");
     defaultParameters.addArgument("TERMS_LIMIT", "3000");
     defaultParameters.addArgument("MODE", "solr");
-    defaultParameters.addArgument("FUSION_QUERY_ENDPOINTS", "");
+    defaultParameters.addArgument("FUSION_QUERY_ENDPOINTS", "http://localhost:8765/api/v1/query-pipelines/${collection}-default/collections/${collection}/select");
     defaultParameters.addArgument("FUSION_USER", "admin");
     defaultParameters.addArgument("FUSION_PASS", "");
     defaultParameters.addArgument("FUSION_REALM", "native");
@@ -362,6 +363,9 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
       }
 
       String mode = params.get("MODE");
+
+      log.info("mode="+mode);
+
       if ("fusion".equalsIgnoreCase(mode)) {
         useFusion = true;
         if (fusionPipelineClient == null) {
@@ -371,16 +375,24 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
           if (fusionEndpoints == null || fusionEndpoints.trim().isEmpty())
             throw new IllegalStateException("Must provide at least 1 Fusion endpoint when running in fusion mode!");
 
+          String collection = params.get("COLLECTION");
+          fusionEndpoints = fusionEndpoints.replace("${collection}", collection);
+
+          fusionHostList = FusionPipelineClient.extractFusionHosts(fusionEndpoints);
+          log.info("Configured Fusion host and port list: "+fusionHostList);
+          fusionQueryPipelinePath = FusionPipelineClient.extractPath(fusionEndpoints);
+          log.info("Configured Fusion query pipeline path: "+fusionQueryPipelinePath);
+
           try {
             if (fusionAuth) {
               fusionPipelineClient =
-                  new FusionPipelineClient(fusionEndpoints,
+                  new FusionPipelineClient(fusionHostList,
                       params.get("FUSION_USER"),
                       params.get("FUSION_PASS"),
                       params.get("FUSION_REALM"));
 
             } else {
-              fusionPipelineClient = new FusionPipelineClient(fusionEndpoints);
+              fusionPipelineClient = new FusionPipelineClient(fusionHostList);
             }
           } catch (Exception exc) {
             if (exc instanceof RuntimeException) {
@@ -501,7 +513,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
     Map<String, List<String>> terms = new HashMap<String, List<String>>();
     SolrQuery termsQ = new SolrQuery();
     termsQ.setParam("qt", "/terms");
-    termsQ.add("terms.fl", "text1_en", "text3_en", "string1_s", "string2_s");
+    termsQ.add("terms.fl", "text1_txt_en", "text3_txt_en", "string1_s", "string2_s");
     termsQ.setParam("terms.limit", String.valueOf(termsLimit));
     QueryResponse resp = solr.query(termsQ);
     Map<String, List<TermsResponse.Term>> termsMap = resp.getTermsResponse().getTermMap();
@@ -513,7 +525,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
       }
     }
 
-    String[] textFields = new String[]{"text1_en", "text3_en", "string1_s", "string2_s"};
+    String[] textFields = new String[]{"text1_txt_en", "text3_txt_en", "string1_s", "string2_s"};
     for (String tf : textFields) {
       List<String> termsForField = terms.get(tf);
       log.info("Loaded "+(termsForField != null ? termsForField.size()+"" : "NULL")+" terms for "+tf);
@@ -542,6 +554,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
 
         if (fusionPipelineClient != null) {
           fusionPipelineClient.shutdown();
+          fusionPipelineClient = null;
         }
       }
     }

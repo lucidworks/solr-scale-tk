@@ -8,8 +8,6 @@ import java.net.ConnectException;
 import java.net.SocketException;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -49,14 +47,33 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   // keeps track of how many tests are running this sampler and when there are
   // none, a final hard commit is sent.
   private static AtomicInteger refCounter = new AtomicInteger(0);
+  
+  private static final FieldSpec[] fields = new FieldSpec[]{
+          new FieldSpec("integer1_i", "i:1:100000:u:10"),
+          new FieldSpec("integer2_i", "i:1:10000:u:50"),
+          new FieldSpec("long1_l", "l:1:10000000:u:10"),
+          new FieldSpec("long2_l", "l:1:50000000:u:20"),
+          new FieldSpec("float1_f", "f:1:2:u:10"),
+          new FieldSpec("float2_f", "f:1:1:u:10"),
+          new FieldSpec("double1_d", "d:1:6:u:20"),
+          new FieldSpec("double2_d", "d:1:4:u:40"),
+          new FieldSpec("timestamp1_tdt", "l:1:31536000:u:0"),
+          new FieldSpec("timestamp2_tdt", "l:1:31536000:u:10"),
+          new FieldSpec("string1_s", "s:10:20000:u:0"),
+          new FieldSpec("string2_s", "s:12:5000:u:0"),
+          new FieldSpec("string3_s", "s:4:1000:u:10"),
+          new FieldSpec("boolean1_b", "i:1:1:u:0"),
+          new FieldSpec("boolean2_b", "i:1:1:u:50"),
+          new FieldSpec("text1_txt_en", "s:15:20000:z:0", 20),
+          new FieldSpec("text2_txt_en", "s:20:100000:z:0", 30),
+          new FieldSpec("text3_txt_en", "s:8:30000:z:0", 80)
+  };
 
-  private static List<String> englishWords = null;
-
-  protected CloudSolrClient cloudSolrClient;
-  //protected Random rand;
-  protected FieldSpec[] fields;
-  protected boolean commitAtEnd = true;
-  protected FusionPipelineClient indexPipelineClient;
+  private static CloudSolrClient cloudSolrClient;
+  private static boolean commitAtEnd = true;
+  private static FusionPipelineClient indexPipelineClient;
+  private static String fusionIndexPipelinePath;
+  private static String fusionHostList;
 
   private static final MetricRegistry metrics = new MetricRegistry();
   private static final Timer sendBatchToSolrTimer = metrics.timer("sendBatchToSolr");
@@ -65,7 +82,9 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   private static long dateBaseMs = 1368045398000l;
 
-  private static AtomicInteger joinKeyAI = null;
+  private static List<String> englishWords = null;
+  
+  private static boolean didSetup = false;
 
   public static ThreadLocal<Random> rands = new ThreadLocal<Random>() {
 
@@ -92,41 +111,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   };
 
   public IndexingSampler() {
-    fields = new FieldSpec[]{
-      new FieldSpec("integer1_i", "i:1:100000:u:10"),
-      new FieldSpec("integer2_i", "i:1:10000:u:50"),
-      new FieldSpec("long1_l", "l:1:10000000:u:10"),
-      new FieldSpec("long2_l", "l:1:50000000:u:20"),
-      new FieldSpec("float1_f", "f:1:2:u:10"),
-      new FieldSpec("float2_f", "f:1:1:u:10"),
-      new FieldSpec("double1_d", "d:1:6:u:20"),
-      new FieldSpec("double2_d", "d:1:4:u:40"),
-      new FieldSpec("timestamp1_tdt", "l:1:31536000:u:0"),
-      new FieldSpec("timestamp2_tdt", "l:1:31536000:u:10"),
-      new FieldSpec("string1_s", "s:10:20000:u:0"),
-      new FieldSpec("string2_s", "s:12:5000:u:0"),
-      new FieldSpec("string3_s", "s:4:1000:u:10"),
-      new FieldSpec("boolean1_b", "i:1:1:u:0"),
-      new FieldSpec("boolean2_b", "i:1:1:u:50"),
-      new FieldSpec("text1_en", "s:15:20000:z:0", 20),
-      new FieldSpec("text2_en", "s:20:100000:z:0", 30),
-      new FieldSpec("text3_en", "s:8:30000:z:0", 80)
-    };
-
-    initializeWords("100K_words_en.txt");
-  }
-
-  protected synchronized void initializeWords(String wordListResource) {
-    if (englishWords == null) {
-      try {
-        englishWords = loadWords(wordListResource);
-      } catch (Exception exc) {
-        if (exc instanceof RuntimeException)
-          throw (RuntimeException) exc;
-        else
-          throw new RuntimeException(exc);
-      }
-    }
+    super();
   }
 
   public FieldSpec[] getFields() {
@@ -143,12 +128,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     defaultParameters.addArgument("THREAD_ID", "${__threadNum}");
     defaultParameters.addArgument("ID_PREFIX", "id-");
     defaultParameters.addArgument("RANDOM_SEED", "5150");
-    defaultParameters.addArgument("WORD_LIST", "100K_words_en.txt");
     defaultParameters.addArgument("COMMIT_AT_END", "true");
     defaultParameters.addArgument("FUSION_INDEX_PIPELINE",
-      "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
+            "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
     defaultParameters.addArgument("ENDPOINT_TYPE", "fusion");
-    defaultParameters.addArgument("QUEUE_SIZE", "5000");
     return defaultParameters;
   }
 
@@ -156,38 +139,30 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   public void setupTest(JavaSamplerContext context) {
     super.setupTest(context);
 
-    Map<String, String> params = new HashMap<String, String>();
-    Iterator<String> paramNames = context.getParameterNamesIterator();
-    while (paramNames.hasNext()) {
-      String paramName = paramNames.next();
-      String param = context.getParameter(paramName);
-      if (param != null)
-        params.put(paramName, param);
-    }
-    setup(params);
-
     synchronized (IndexingSampler.class) {
-
-      if (joinKeyAI == null)
-        joinKeyAI = new AtomicInteger(0);
-
-      if (reporter == null) {
-        reporter = ConsoleReporter.forRegistry(metrics)
-          .convertRatesTo(TimeUnit.SECONDS)
-          .convertDurationsTo(TimeUnit.MILLISECONDS).build();
-        reporter.start(1, TimeUnit.MINUTES);
+      if (didSetup) {
+        log.info("Test already setup for "+Thread.currentThread().getName());
+        return;
       }
+
+      log.info("In setupTest for thread: " + Thread.currentThread().getName());
+      Map<String, String> params = new HashMap<String, String>();
+      Iterator<String> paramNames = context.getParameterNamesIterator();
+      while (paramNames.hasNext()) {
+        String paramName = paramNames.next();
+        String param = context.getParameter(paramName);
+        if (param != null)
+          params.put(paramName, param);
+      }
+      setup(params);
+      didSetup = true;
     }
+
+    int numRefs = refCounter.incrementAndGet();
+    log.info("Initialized "+numRefs+" test threads so far ...");
   }
 
-  public void setup(Map<String, String> params) {
-    commitAtEnd = "true".equals(params.get("COMMIT_AT_END"));
-
-    // setup for data generation
-    String wordListResource = params.get("WORD_LIST");
-    if (wordListResource == null)
-      wordListResource = "100K_words_en.txt";
-    initializeWords(wordListResource);
+  public static void setup(Map<String, String> params) {
 
     String type = params.get("ENDPOINT_TYPE");
     String collection = params.get("COLLECTION");
@@ -210,8 +185,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
       // add on the collection part
       fusionIndexPipelineEndpoint = fusionIndexPipelineEndpoint.replace("${collection}", collection);
+      fusionHostList = FusionPipelineClient.extractFusionHosts(fusionIndexPipelineEndpoint);
+      log.info("Configured Fusion host and port list: "+fusionHostList);
+      fusionIndexPipelinePath = FusionPipelineClient.extractPath(fusionIndexPipelineEndpoint);
+      log.info("Configured Fusion index pipelie path: "+fusionIndexPipelinePath);
+
       try {
-        indexPipelineClient = new FusionPipelineClient(fusionIndexPipelineEndpoint);
+        indexPipelineClient = new FusionPipelineClient(fusionHostList);
       } catch (Exception exc) {
         throw new RuntimeException(exc);
       }
@@ -221,11 +201,25 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       throw new IllegalArgumentException(type + " not supported!");
     }
 
-    refCounter.incrementAndGet();
+    try {
+      englishWords = loadWords("100K_words_en.txt");
+    } catch (Exception exc) {
+      if (exc instanceof RuntimeException)
+        throw (RuntimeException) exc;
+      else
+        throw new RuntimeException(exc);
+    }
+
+    commitAtEnd = "true".equals(params.get("COMMIT_AT_END"));
+
+    reporter = ConsoleReporter.forRegistry(metrics)
+            .convertRatesTo(TimeUnit.SECONDS)
+            .convertDurationsTo(TimeUnit.MILLISECONDS).build();
+    reporter.start(1, TimeUnit.MINUTES);
   }
 
-  protected List<String> loadWords(String classpathRes) throws Exception {
-    InputStream stream = getClass().getClassLoader().getResourceAsStream(classpathRes);
+  protected static List<String> loadWords(String classpathRes) throws Exception {
+    InputStream stream = IndexingSampler.class.getClassLoader().getResourceAsStream(classpathRes);
     if (stream == null)
       throw new IllegalArgumentException(classpathRes + " not found on classpath!");
 
@@ -256,11 +250,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   @Override
   public void teardownTest(JavaSamplerContext context) {
+
+    log.info("In teardownTest for thread: "+Thread.currentThread().getName());
+
     int refs = refCounter.decrementAndGet();
-
     if (refs <= 0) {
-      joinKeyAI.set(0);
-
       if (commitAtEnd && cloudSolrClient != null) {
         log.info("Sending final commit to SolrCloud.");
         try {
@@ -274,15 +268,15 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
         reporter.report();
         reporter.stop();
       }
-    }
 
-    if (cloudSolrClient != null) {
-      try {
-        cloudSolrClient.shutdown();
-      } catch (Exception ignore) {
+      if (cloudSolrClient != null) {
+        try {
+          cloudSolrClient.shutdown();
+        } catch (Exception ignore) {
+        }
+        cloudSolrClient = null;
+        log.info("Shutdown CloudSolrClient.");
       }
-      cloudSolrClient = null;
-      log.info("Shutdown CloudSolrClient.");
     }
 
     super.teardownTest(context);
@@ -290,6 +284,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
   @Override
   public SampleResult runTest(JavaSamplerContext context) {
+
+    if (!didSetup)
+      throw new IllegalStateException("Setup failed! Test cannot be executed.");
+
+    log.info("In runTest for thread: "+Thread.currentThread().getName());
+
     SampleResult result = new SampleResult();
     result.sampleStart();
 
@@ -299,12 +299,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     int numDocsPerThread = context.getIntParameter("NUM_DOCS_PER_LOOP", 10000);
     if (numDocsPerThread < batchSize)
       numDocsPerThread = batchSize; // min is batchSize
-    int queueSize = context.getIntParameter("QUEUE_SIZE", 5000);
 
-    int totalDocs = 0;
+    int totalDocs;
     try {
       if (cloudSolrClient != null) {
-        totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerThread, queueSize, batchSize);
+        totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerThread, batchSize);
       } else {
         totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerThread, batchSize);
       }
@@ -345,7 +344,6 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     }
 
     inDoc.setField("indexed_at_tdt", new Date());
-    //inDoc.setField("joinkey_s", joinKeyAI.incrementAndGet());
 
     return inDoc;
   }
@@ -419,122 +417,29 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return doc;
   }
 
-  // This class sends batches to Solr while the outer (main thread) generates documents
-  class SendToSolrThread extends Thread {
+  protected int indexSolrDocument(String idPrefix, String threadId, int numDocsToSend, int batchSize) throws Exception {
+    log.info(String.format("Starting indexing sampler test for %s (%s), batchSize=%d, numDocsToSend=%d",
+            Thread.currentThread().getName(), threadId, batchSize, numDocsToSend));
 
-    IndexingSampler sampler;
-    int batchSize;
-    BlockingQueue<SolrInputDocument> queue;
-    int sent = 0;
-
-    SendToSolrThread(String threadId, IndexingSampler sampler, BlockingQueue<SolrInputDocument> queue, int batchSize) {
-      super("SentToSolrThread-" + threadId);
-      this.setPriority(Thread.MAX_PRIORITY);
-      this.queue = queue;
-      this.sampler = sampler;
-      this.batchSize = batchSize;
-    }
-
-    public int sent() {
-      return sent;
-    }
-
-    @Override
-    public void run() {
-      log.info(getName() + " is running.");
-      List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
-      SolrInputDocument doc = null;
-      try {
-        doc = queue.poll();
-        while (doc != null) {
-          batch.add(doc);
-
-          if (batch.size() >= batchSize)
-            sent += sampler.sendBatch(batch, 10, 3);
-
-          doc = queue.poll();
-          if (doc == null) {
-            // safety measure to allow more docs to come-in
-            Thread.sleep(500);
-            doc = queue.poll();
-          }
-        }
-
-        // last batch
-        if (batch.size() > 0)
-          sent += sendBatch(batch, 10, 3);
-
-      } catch (Exception e) {
-        if (e instanceof RuntimeException) {
-          throw (RuntimeException) e;
-        } else {
-          throw new RuntimeException(e);
-        }
-      }
-    }
-
-    public void blockUntilFinished() {
-      while (!queue.isEmpty()) {
-        try {
-          Thread.sleep(1000);
-        } catch (InterruptedException e) {
-          Thread.interrupted();
-          break;
-        }
-      }
-    }
-  }
-
-  protected int indexSolrDocument(String idPrefix, String threadId, int numDocsToSend, int queueSize, int batchSize) throws Exception {
-    log.info(String.format("Starting indexing sampler test with: threadId=%s, batchSize=%d, numDocsToSend=%d, queueSize=%d",
-      threadId, batchSize, numDocsToSend, queueSize));
-
-    // safe-guard to ensure the Send thread doesn't block forever waiting for more docs ...
-    if (queueSize > numDocsToSend)
-      queueSize = numDocsToSend;
-
-    // at about 90% full, we'll put the create threads to sleep
-    int highWaterMark = Math.round(queueSize * 0.65f);
-    int lowWaterMark = Math.min(Math.round(queueSize * 0.2f), batchSize * 3);
-    int nBatches = batchSize * 8;
-
-    // start constructing and queuing up docs, but don't start sending until the queue has some docs buffered up
-    BlockingQueue<SolrInputDocument> queue = new LinkedBlockingQueue<SolrInputDocument>(queueSize);
-    SendToSolrThread sendThread = null;
     int totalDocs = 0;
     Random rand = rands.get();
+    List<SolrInputDocument> batch = new ArrayList<SolrInputDocument>(batchSize);
     for (int d = 0; d < numDocsToSend; d++) {
       String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
-      queue.offer(buildSolrInputDocument(docId, rand));
-
-      if (++totalDocs % nBatches == 0) {
-        log.info("Thread " + threadId + " has queued " + totalDocs +
-          " docs and sent " + (sendThread != null ? sendThread.sent() : 0) +
-          "; queue.size=" + queue.size());
-      }
-
-      if (queue.size() > highWaterMark) {
-        if (sendThread != null) {
-          // queue is pretty full ... let this thread sleep a little to allow the sender to get caught up
-          while (queue.size() > lowWaterMark) {
-            try {
-              Thread.sleep(500);
-            } catch (InterruptedException ie) {
-            }
-          }
-        } else {
-          // queue is almost full, start sending documents
-          sendThread = new SendToSolrThread(threadId, this, queue, batchSize);
-          sendThread.start();
-        }
+      SolrInputDocument doc = buildSolrInputDocument(docId, rand);
+      batch.add(doc);
+      if (batch.size() >= batchSize)
+        totalDocs += sendBatch(batch, 10, 3);
+      if (++totalDocs % 1000 == 0) {
+        log.info(Thread.currentThread().getName()+" (" + threadId + ") has queued " + totalDocs);
       }
     }
 
-    if (sendThread != null) {
-      log.info("Constructed " + numDocsToSend + " docs; waiting for queue to empty, current size is: " + queue.size());
-      sendThread.blockUntilFinished();
-      log.info("Queue drained ... thread " + threadId + " is done sending " + totalDocs + " docs");
-    }
+    // last batch
+    if (batch.size() > 0)
+      totalDocs += sendBatch(batch, 10, 3);
+
+    log.info(Thread.currentThread().getName()+" (" + threadId + ") is done sending " + totalDocs + " docs");
 
     return totalDocs;
   }
@@ -543,7 +448,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     int sent = 0;
     final Timer.Context sendTimerCtxt = sendBatchToSolrTimer.time();
     try {
-      indexPipelineClient.postBatchToPipeline(batch);
+      indexPipelineClient.postBatchToPipeline(fusionIndexPipelinePath, batch);
       sent = batch.size();
     } catch (Exception exc) {
 
@@ -626,17 +531,13 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
   // Borrowed from the Pig DataGenerator
   //
 
-  public static enum Datatype {
+  enum Datatype {
     INT, LONG, FLOAT, DOUBLE, STRING
-  }
+  };
 
-  ;
-
-  static enum DistributionType {
+  enum DistributionType {
     UNIFORM, ZIPF
-  }
-
-  ;
+  };
 
   public static class FieldSpec {
     public String name;
@@ -721,7 +622,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       this.words = englishWords; // hacky but i'm tired
 
       String suffix = name.split("_")[1];
-      if ("en".equals(suffix)) {
+      if ("txt_en".equals(suffix) || "txt".equals(suffix)) {
         return nextText(rand);
       } else if ("tdt".equals(suffix)) {
         return nextDate(rand);

@@ -934,7 +934,7 @@ def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
                     sudo("sh -c 'if [ -d \"/mnt\" ]; then umount /mnt || true; rm -rf /mnt; fi'")
                 # mount the instance store device on the correct /vol disk
                 if _fab_exists('/vol%d' % v) is False:
-                    sudo('mkfs -t ext4 /dev/%s || true' % xdevs[v])
+                    sudo('mkfs -F -t ext4 /dev/%s || true' % xdevs[v])
                     sudo('mkdir /vol%d' % v)
                     sudo('echo "/dev/%s /vol%d ext4 defaults 0 2" >> /etc/fstab' % (xdevs[v], v))
                     sudo('mount /vol%d' % v)
@@ -2836,7 +2836,7 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     fusionConf = fusionHome+'/conf'
     fusionLogs = fusionHome+'/var/log'
 
-    apiJavaOpts = '-Xmx512m' if apiJavaMem is None else '-Xmx'+apiJavaMem
+    apiJavaOpts = '-Xmx1g' if apiJavaMem is None else '-Xmx'+apiJavaMem
 
     # create the fusion.in.sh include file
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
@@ -3020,7 +3020,7 @@ def fusion_status(cluster):
             run(fusionHome+'/bin/fusion status')
     cluster_status(cluster)
 
-def fusion_setup(cluster,vers='2.1.0'):
+def fusion_setup(cluster,vers='2.4.2'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
@@ -3056,7 +3056,7 @@ def fusion_setup(cluster,vers='2.1.0'):
 
     _info('\n\nFusion installed on %d hosts' % len(hosts))
 
-def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.1.0'):
+def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.4.2'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
@@ -3065,7 +3065,7 @@ def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.1.0'):
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,api=n)
 
-def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.2.1',zkVers='3.4.6',fusionVers=None,overwriteExistingConfig=False):
+def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.5.2',zkVers='3.4.6',fusionVers=None,overwriteExistingConfig=False):
     """
     Downloads Solr, ZooKeeper, and optionally Fusion and then builds a local cluster.
     """

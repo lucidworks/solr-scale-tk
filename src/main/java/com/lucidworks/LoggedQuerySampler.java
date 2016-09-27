@@ -64,6 +64,8 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
   private static final Counter zeroResults = metrics.counter("zeroResults");
   private static final Map<String,Counter> serverRequestCounters = new HashMap<String,Counter>();
   private static FusionPipelineClient fusionPipelineClient = null;
+  private static String fusionQueryPipelinePath;
+  private static String fusionHostList;
   private static boolean useFusion = false;
 
   private static ConsoleReporter reporter = null;
@@ -115,7 +117,7 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
         final com.codahale.metrics.Timer.Context queryTimerCtxt = queryTimer.time();
         try {
           waitingCounter.inc();
-          QueryResponse queryResponse = fusionPipelineClient.queryFusion(solrQuery);
+          QueryResponse queryResponse = fusionPipelineClient.queryFusion(fusionQueryPipelinePath, solrQuery);
           long diffQ = queryTimerCtxt.stop();
           long diffQMs = TimeUnit.MILLISECONDS.convert(diffQ, TimeUnit.NANOSECONDS);
 
@@ -329,16 +331,21 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
           if (fusionEndpoints == null || fusionEndpoints.trim().isEmpty())
             throw new IllegalStateException("Must provide at least 1 Fusion endpoint when running in fusion mode!");
 
+          fusionHostList = FusionPipelineClient.extractFusionHosts(fusionEndpoints);
+          log.info("Configured Fusion host and port list: "+fusionHostList);
+          fusionQueryPipelinePath = FusionPipelineClient.extractPath(fusionEndpoints);
+          log.info("Configured Fusion query pipeline path: "+fusionQueryPipelinePath);
+
           try {
             if (fusionAuth) {
               fusionPipelineClient =
-                  new FusionPipelineClient(fusionEndpoints,
+                  new FusionPipelineClient(fusionHostList,
                       params.get("FUSION_USER"),
                       params.get("FUSION_PASS"),
                       params.get("FUSION_REALM"));
 
             } else {
-              fusionPipelineClient = new FusionPipelineClient(fusionEndpoints);
+              fusionPipelineClient = new FusionPipelineClient(fusionHostList);
             }
           } catch (Exception exc) {
             if (exc instanceof RuntimeException) {

@@ -57,6 +57,9 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   protected String fusionPass;
   protected String fusionRealm;
   protected String endpoints;
+  protected String fusionIndexPipelinePath;
+  protected String fusionHostList;
+
   private ExecutorService executor = null;
 
   protected List batch = new ArrayList();
@@ -167,7 +170,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     Callable<Object> task = new Callable<Object>() {
       public Object call() {
         try {
-          FusionIndexPipelineStoreFunc.this.pipelineClient.postBatchToPipeline(theBatch);
+          FusionIndexPipelineStoreFunc.this.pipelineClient.postBatchToPipeline(fusionIndexPipelinePath, theBatch);
           return Boolean.TRUE;
         } catch (Exception exc) {
           log.error("{In java.util.concurrent.Callable} Failed to send batch after " + timeoutSecs + " secs due to: " + exc.toString());
@@ -266,7 +269,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   protected void index(Map<String,Object> doc) throws Exception {
     List list = new ArrayList();
     list.add(doc);
-    pipelineClient.postBatchToPipeline(list);
+    pipelineClient.postBatchToPipeline(fusionIndexPipelinePath, list);
   }
 
   protected void commit() {
@@ -478,8 +481,14 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   @SuppressWarnings("unchecked")
   @Override
   public void prepareToWrite(RecordWriter writer) throws IOException {
+
+    fusionHostList = FusionPipelineClient.extractFusionHosts(endpoints);
+    log.info("Configured Fusion host and port list: "+fusionHostList);
+    fusionIndexPipelinePath = FusionPipelineClient.extractPath(endpoints);
+    log.info("Configured Fusion index pipelie path: "+fusionIndexPipelinePath);
+
     try {
-      pipelineClient = fusionAuthEnabled ? new FusionPipelineClient(endpoints, fusionUser, fusionPass, fusionRealm) : new FusionPipelineClient(endpoints);
+      pipelineClient = fusionAuthEnabled ? new FusionPipelineClient(fusionHostList, fusionUser, fusionPass, fusionRealm) : new FusionPipelineClient(fusionHostList);
     } catch (Exception e) {
       log.error("Unable to connect to: " + endpoints);
       throw new IOException("Unable to connect to: " + endpoints, e);
