@@ -1037,7 +1037,7 @@ def _estimate_indexing_throughput(cluster, collection, usePipeline=False):
     hosts = _lookup_hosts(cluster)
     timestampField = 'indexed_at_tdt'
 
-    if usePipeline:
+    if str(usePipeline) == "True":
         solr = pysolr.Solr('http://%s:8765/api/v1/query-pipelines/%s-default/collections/%s' % (hosts[0], collection, collection), timeout=10)
     else:
         solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
@@ -2846,7 +2846,7 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
 API_PORT=8765
 API_STOP_PORT=7765
 API_STOP_KEY=fusion
-API_JAVA_OPTIONS=(%s -Xss256k -Dapple.awt.UIElement=true)
+API_JAVA_OPTIONS=(%s -Xss256k -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true)
 
 CONNECTORS_PORT=8763
 CONNECTORS_STOP_PORT=7763
@@ -3182,12 +3182,12 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
     dict_subnet = {"Instances.Ec2SubnetId":subnetid}
     _info('Launching EMR cluster '+cluster+' in VPC subnet '+subnetid)
     job_flow_id = emr.run_jobflow(cluster,
-                log_uri='s3://emr-logs-'+cluster+'-'+nowStr+'/',
+                log_uri='s3://sstk-dev/emr/emr-logs-'+cluster+'-'+nowStr+'/',
                 master_instance_type='m3.xlarge',
                 slave_instance_type=slave_instance_type,
                 ec2_keyname=keyname,
                 num_instances=int(num)+1,
-                ami_version='3.6.0',
+                ami_version='3.11.0',
                 keep_alive=keep_alive,
                 steps=steps,
                 enable_debugging=True,
@@ -3288,13 +3288,18 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
     stepName = 'pig-solr-'+collection+'-'+nowStr
-    pigFile = 's3://solr-scale-tk/pig/'+pig
 
+    if pig.startswith('s3://'):
+        pigFile = pig
+    else:
+        pigFile = 's3://solr-scale-tk/pig/'+pig
+    
     pigArgs = ['-p','INPUT='+input,
                '-p','RED='+str(numReducers),
                '-p','collection='+collection,
                '-p','batch='+str(batchSize),
-               '-p','zkHost='+zkHost]
+               '-p','zkHost='+zkHost,
+               '-p','JOB_JAR=s3://sstk-dev/lucidworks-pig-functions-2.2.1.jar']
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
     try:
@@ -3306,7 +3311,7 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
 
     return stepName
 
-def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy=True):
+def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy='True'):
     """
     Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Fusion.
     """
@@ -3323,7 +3328,7 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
     nowStr = now.strftime("%Y%m%d-%H%M%S")
 
     stepName = 'pig-fusion-'+collection+'-'+nowStr
-    if pig.startswith('s3'):
+    if pig.startswith('s3://'):
         pigFile = pig
     else:
         pigFile = 's3://solr-scale-tk/pig/'+pig
@@ -3333,12 +3338,15 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
     if pipeline is None:
         pipeline = collection+'-default'
 
-    goThruProxy = bool(thruProxy)
+    secureFusion = str(thruProxy) == 'True'
+
+    print("secureFusion? %s" % secureFusion)
+
     fusionEndpoint = ''
     for host in hosts:
         if len(fusionEndpoint) > 0:
             fusionEndpoint += ','
-        if goThruProxy:
+        if secureFusion is True:
             fusionEndpoint += 'http://'+host+':8764/api/apollo/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
         else:
             fusionEndpoint += 'http://'+host+':8765/api/v1/index-pipelines/'+pipeline+'/collections/'+collection+'/index'
@@ -3352,8 +3360,10 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
                '-p','FUSION_USER=admin',
                '-p','FUSION_PASS=password123',
                '-p','FUSION_REALM=native',
-               '-p','FUSION_AUTH_ENABLED='+('true' if goThruProxy else 'false'),
+               '-p','FUSION_AUTH_ENABLED='+('true' if secureFusion is True else 'false'),
                '-p','SSTK_JAR=s3://sstk-dev/solr-scale-tk-0.1-exe.jar']
+
+    _status('Starting Pig JOB using args: '+str(pigArgs))
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
     try:
@@ -3362,7 +3372,6 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
         _error('Call to add_jobflow_steps for job flow '+job_flow_id+' failed due to: '+str(se)+'! Will retry in 10 seconds ...')
         time.sleep(10)
         emr.add_jobflow_steps(job_flow_id, [pigStep])
-
     return stepName
 
 def _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster):
@@ -3470,8 +3479,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     collection = 'perf'
 
-    fusion_new_collection(cluster,name=collection,rf=2,shards=n,conf='perf')
-    fusion_new_collection(cluster,name=collection+'_js',rf=2,shards=n,conf='perf_js')
+    fusion_new_collection(cluster,name=collection,rf=1,shards=n,conf='perf')
+    fusion_new_collection(cluster,name=collection+'_js',rf=1,shards=n,conf='perf_js')
 
     perfPipelineDef = """{
   "id" : "perf",
@@ -3557,7 +3566,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     tag_emr_instances(emrCluster,'Fusion Performance Testing',region,customTags='{"CostCenter":"eng"}')
     clear_collection(cluster, collection)
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
-                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
 
     sstk_cfg = _get_config()
     job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
@@ -3572,7 +3581,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         report_fusion_metrics(cluster, collection)
 
     # Solr indexing step
-    if index_solr_too:
+    if str(index_solr_too) == "True":
         new_collection(cluster,name='perf-solr',rf=2,shards=n,existingConfName='perf')
         stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf-solr',
                                        region=region, reducers=numReducers, batch_size=bufferSize)
@@ -3590,7 +3599,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         _info("Enabled the partitionByTime feature for perf_tp")
         stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection='perf_tp',
                                            pig='s3://sstk-dev/s3_to_fusion.pig',
-                                           region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+                                           region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
         if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
             # job completed ...
             _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
@@ -4035,7 +4044,7 @@ def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', max
     _info("Enabled the partitionByTime feature for perf_tp")
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection='perf_tp',
                                        pig='s3://sstk-dev/s3_to_fusion.pig',
-                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy=False)
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
     emr = boto.emr.connect_to_region(region)
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
         # job completed ...

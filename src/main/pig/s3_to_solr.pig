@@ -20,7 +20,7 @@ SET mapred.map.max.attempts 20;
 -- s3://solr-scale-tk/pig/output/syn_sample_10m
 -- s3://thelabdude/syn_sample_10m
 -- s3://solr-scale-tk/pig/output/foo/
--- -p RED=44 -p collection=perf10x2 -p batch=1500 -p zkHost=ec2-54-147-190-173.compute-1.amazonaws.com:2181,ec2-54-159-24-141.compute-1.amazonaws.com:2181,ec2-54-159-4-235.compute-1.amazonaws.com:2181/rpf
+-- -p JOB_JAR=s3://sstk-dev/lucidworks-pig-functions-2.2.1.jar -p RED=6 -p collection=perf1 -p batch=500 -p zkHost=ec2-52-91-12-62.compute-1.amazonaws.com:2181/perf1
 
 data = load '$INPUT' using PigStorage() as (id: chararray,
   integer1_i: int,

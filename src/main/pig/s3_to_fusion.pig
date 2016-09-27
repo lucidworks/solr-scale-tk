@@ -1,7 +1,9 @@
 REGISTER '$SSTK_JAR'
--- s3://solr-scale-tk/pig/solr-scale-tk-0.1-exe.jar
+-- s3://sstk-dev/solr-scale-tk-0.1-exe.jar
 -- REGISTER '/Users/timpotter/dev/lw/projects/solr-scale-tk/target/solr-scale-tk-0.1-exe.jar'
 -- http://ec2-52-20-196-79.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index,http://ec2-52-20-196-79.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index,http://ec2-52-20-255-7.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf/collections/perf/index
+
+-- -p SSTK_JAR=s3://sstk-dev/solr-scale-tk-0.1-exe.jar -p REDUCERS=6 -p INPUT=s3://solr-scale-tk/pig/output/syn_sample_5m -p FUSION_BATCH_SIZE=500 -p FUSION_AUTH_ENABLED=true -p FUSION_USER=admin -p FUSION_PASS=password123 -p FUSION_REALM=native -p FUSION_ENDPOINT=http://ec2-52-91-12-62.compute-1.amazonaws.com:8764/api/apollo/index-pipelines/perf-default/collections/perf/index
 
 SET mapred.map.tasks.speculative.execution false;
 SET mapred.reduce.tasks.speculative.execution false;
