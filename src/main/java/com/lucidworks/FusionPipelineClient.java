@@ -2,6 +2,8 @@ package com.lucidworks;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVPrinter;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.http.HttpEntity;
@@ -39,10 +41,7 @@ import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrException;
 import org.codehaus.jackson.map.ObjectMapper;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -59,6 +58,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class FusionPipelineClient {
 
   private static final Log log = LogFactory.getLog(FusionPipelineClient.class);
+
+  public static final String JSON_CONTENT_TYPE = "application/json";
 
   public static final String LWWW_JAAS_FILE = "lww.jaas.file";
   public static final String LWWW_JAAS_APPNAME = "lww.jaas.appname";
@@ -466,6 +467,11 @@ public class FusionPipelineClient {
   }
 
   public void postBatchToPipeline(String pipelinePath, List docs) throws Exception {
+    postBatchToPipeline(pipelinePath, docs, "application/json");
+  }
+
+  public void postBatchToPipeline(String pipelinePath, List docs, String contentType) throws Exception {
+
     int numDocs = docs.size();
 
     if (!pipelinePath.startsWith("/"))
@@ -494,7 +500,7 @@ public class FusionPipelineClient {
           log.debug("POSTing batch of " + numDocs + " input docs to " + hostAndPort + pipelinePath + " as request " + requestId);
 
         Exception retryAfterException =
-                postJsonToPipelineWithRetry(hostAndPort, pipelinePath, docs, mutable, lastExc, requestId);
+                postDocsToPipelineWithRetry(hostAndPort, pipelinePath, docs, mutable, lastExc, requestId, contentType);
         if (retryAfterException == null) {
           lastExc = null;
           break; // request succeeded ...
@@ -514,23 +520,24 @@ public class FusionPipelineClient {
       if (log.isDebugEnabled())
         log.debug("POSTing batch of " + numDocs + " input docs to " + hostAndPort + pipelinePath + " as request " + requestId);
 
-      Exception exc = postJsonToPipelineWithRetry(hostAndPort, pipelinePath, docs, mutable, null, requestId);
+      Exception exc = postDocsToPipelineWithRetry(hostAndPort, pipelinePath, docs, mutable, null, requestId, contentType);
       if (exc != null)
         throw exc;
     }
   }
 
-  protected Exception postJsonToPipelineWithRetry(String hostAndPort,
+  protected Exception postDocsToPipelineWithRetry(String hostAndPort,
                                                   String pipelinePath,
                                                   List docs,
                                                   ArrayList<String> mutable,
                                                   Exception lastExc,
-                                                  int requestId)
+                                                  int requestId,
+                                                  String contentType)
           throws Exception {
     String url = hostAndPort + pipelinePath;
     Exception retryAfterException = null;
     try {
-      postJsonToPipeline(hostAndPort, pipelinePath, docs, requestId);
+      postDocsToPipeline(hostAndPort, pipelinePath, docs, requestId, contentType);
       if (lastExc != null)
         log.info("Re-try request " + requestId + " to " + url + " succeeded after seeing a " + lastExc.getMessage());
     } catch (Exception exc) {
@@ -551,7 +558,7 @@ public class FusionPipelineClient {
           Thread.interrupted();
         }
         // note we want the exception to propagate from here up the stack since we re-tried and it didn't work
-        postJsonToPipeline(hostAndPort, pipelinePath, docs, requestId);
+        postDocsToPipeline(hostAndPort, pipelinePath, docs, requestId, contentType);
         log.info("Re-try request " + requestId + " to " + url + " succeeded");
         retryAfterException = null; // return success condition
       }
@@ -575,7 +582,34 @@ public class FusionPipelineClient {
     }
   }
 
-  public void postJsonToPipeline(String hostAndPort, String pipelinePath, List docs, int requestId) throws Exception {
+  private class CsvContentProducer implements ContentProducer {
+
+    List docs;
+
+    CsvContentProducer(List docs) {
+      this.docs = docs;
+    }
+
+    public void writeTo(OutputStream outputStream) throws IOException {
+      try (OutputStreamWriter osw = new OutputStreamWriter(outputStream, StandardCharsets.UTF_8)) {
+        CSVPrinter csvPrinter = new CSVPrinter(osw, CSVFormat.DEFAULT);
+        for (Object doc : docs) {
+          if (doc instanceof Map) {
+            Map<String,Object> map = (Map<String,Object>)doc;
+            csvPrinter.printRecord(map.values());
+          } else {
+            csvPrinter.print(doc);
+            csvPrinter.println();
+          }
+        }
+        csvPrinter.flush();
+        csvPrinter.close();
+      }
+    }
+  }
+
+
+  public void postDocsToPipeline(String hostAndPort, String pipelinePath, List docs, int requestId, String contentType) throws Exception {
     FusionSession fusionSession = getSession(hostAndPort, requestId);
     String postUrl = hostAndPort + pipelinePath;
     if (postUrl.indexOf("?") != -1) {
@@ -585,8 +619,8 @@ public class FusionPipelineClient {
     }
 
     HttpPost postRequest = new HttpPost(postUrl);
-    EntityTemplate et = new EntityTemplate(new JacksonContentProducer(jsonObjectMapper, docs));
-    et.setContentType("application/json");
+    EntityTemplate et = new EntityTemplate(newContentProducer(contentType, docs));
+    et.setContentType(contentType);
     et.setContentEncoding(StandardCharsets.UTF_8.name());
     postRequest.setEntity(et);
 
@@ -657,6 +691,16 @@ public class FusionPipelineClient {
           log.warn("Failed to consume entity due to: " + ignore);
         }
       }
+    }
+  }
+
+  protected ContentProducer newContentProducer(String contentType, List docs) {
+    if ("text/csv".equals(contentType)) {
+      return new CsvContentProducer(docs);
+    } else if ("application/json".equals(contentType)) {
+      return new JacksonContentProducer(jsonObjectMapper, docs);
+    } else {
+      throw new IllegalArgumentException("Content type "+contentType+" not supported! Use text/csv or application/json.");
     }
   }
 

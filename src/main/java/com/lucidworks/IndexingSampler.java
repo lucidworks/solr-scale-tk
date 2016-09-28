@@ -132,6 +132,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     defaultParameters.addArgument("FUSION_INDEX_PIPELINE",
             "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
     defaultParameters.addArgument("ENDPOINT_TYPE", "fusion");
+    defaultParameters.addArgument("FUSION_CONTENT_TYPE", FusionPipelineClient.JSON_CONTENT_TYPE);
     return defaultParameters;
   }
 
@@ -159,7 +160,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     }
 
     int numRefs = refCounter.incrementAndGet();
-    log.info("Initialized "+numRefs+" test threads so far ...");
+    log.info("Initialized " + numRefs + " test threads so far ...");
   }
 
   public static void setup(Map<String, String> params) {
@@ -295,6 +296,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
     String idPrefix = context.getParameter("ID_PREFIX");
     String threadId = context.getParameter("THREAD_ID");
+    String contentType = context.getParameter("FUSION_CONTENT_TYPE","application/json");
     int batchSize = context.getIntParameter("BATCH_SIZE", 100);
     int numDocsPerThread = context.getIntParameter("NUM_DOCS_PER_LOOP", 10000);
     if (numDocsPerThread < batchSize)
@@ -305,7 +307,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       if (cloudSolrClient != null) {
         totalDocs = indexSolrDocument(idPrefix, threadId, numDocsPerThread, batchSize);
       } else {
-        totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerThread, batchSize);
+        totalDocs = indexToPipeline(idPrefix, threadId, numDocsPerThread, batchSize, contentType);
       }
       log.info("Thread " + threadId + " finished sending " + totalDocs + " docs to Solr.");
       result.setSuccessful(true);
@@ -348,9 +350,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return inDoc;
   }
 
-  protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerThread, int batchSize) throws Exception {
+  protected int indexToPipeline(String idPrefix, String threadId, int numDocsPerThread, int batchSize, String contentType) throws Exception {
     int totalDocs = 0;
     List batch = new ArrayList();
+
+    boolean isCsv = "text/csv".equals(contentType);
 
     Random rand = rands.get();
     Timer.Context constructBatchTimerCtxt = null;
@@ -361,14 +365,14 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       }
 
       String docId = String.format("%s_%s_%d", idPrefix, threadId, d);
-      Map<String,Object> nextDoc = buildJsonInputDocument(docId, rand);
+      Map<String,Object> nextDoc = buildFusionInputDocument(docId, rand, isCsv);
       batch.add(nextDoc);
 
       if (batch.size() >= batchSize) {
         constructBatchTimerCtxt.stop();
         constructBatchTimerCtxt = null; // reset
 
-        totalDocs += sendJsonBatch(batch, 10, 3);
+        totalDocs += sendBatchToFusion(batch, 10, 3, contentType);
         if (totalDocs % 1000 == 0) {
           log.info("Thread " + threadId + " has sent " + totalDocs
             + " docs so far.");
@@ -378,17 +382,22 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
     // last batch
     if (batch.size() > 0) {
-      totalDocs += sendJsonBatch(batch, 10, 3);
+      totalDocs += sendBatchToFusion(batch, 10, 3, contentType);
     }
 
     return totalDocs;
   }
 
-  public Map<String,Object> buildJsonInputDocument(String docId, Random rand) {
+  public Map<String,Object> buildFusionInputDocument(String docId, Random rand, boolean isCsv) {
 
     SimpleDateFormat df = sdf.get();
 
-    Map<String,Object> doc = new HashMap<String,Object>();
+    Map<String,Object> doc = new LinkedHashMap<>();
+
+    if (isCsv) {
+      doc.put("id", docId);
+    }
+
     for (FieldSpec f : fields) {
       if (f.name.endsWith("_ss")) {
         int numVals = rand.nextInt(20) + 1;
@@ -407,6 +416,10 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
             doc.put(f.name, df.format((Date) val));
           } else {
             doc.put(f.name, val);
+          }
+        } else {
+          if (isCsv) {
+            doc.put(f.name, ""); // need a blank placeholder for csv to have uniform records
           }
         }
       }
@@ -444,11 +457,11 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     return totalDocs;
   }
 
-  protected int sendJsonBatch(List batch, int waitBeforeRetry, int maxRetries) throws Exception {
+  protected int sendBatchToFusion(List batch, int waitBeforeRetry, int maxRetries, String contentType) throws Exception {
     int sent = 0;
     final Timer.Context sendTimerCtxt = sendBatchToSolrTimer.time();
     try {
-      indexPipelineClient.postBatchToPipeline(fusionIndexPipelinePath, batch);
+      indexPipelineClient.postBatchToPipeline(fusionIndexPipelinePath, batch, contentType);
       sent = batch.size();
     } catch (Exception exc) {
 
@@ -464,7 +477,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
           log.warn("ERROR: " + rootCause + " ... Sleeping for "
             + waitBeforeRetry + " seconds before re-try ...");
           Thread.sleep(waitBeforeRetry * 1000L);
-          sent = sendJsonBatch(batch, waitBeforeRetry, maxRetries);
+          sent = sendBatchToFusion(batch, waitBeforeRetry, maxRetries, contentType);
         } else {
           log.error("No more retries available! Add batch failed due to: " + rootCause);
           throw exc;

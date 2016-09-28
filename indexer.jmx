@@ -17,7 +17,7 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <stringProp name="LoopController.loops">1</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">2</stringProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
         <stringProp name="ThreadGroup.ramp_time">1</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
@@ -36,17 +36,17 @@
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">sstk1</stringProp>
+                <stringProp name="Argument.value">csv2</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
                 <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">100</stringProp>
+                <stringProp name="Argument.value">1</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
                 <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">1000</stringProp>
+                <stringProp name="Argument.value">1</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="THREAD_ID" elementType="Argument">
@@ -64,11 +64,6 @@
                 <stringProp name="Argument.value">5150</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
-              <elementProp name="WORD_LIST" elementType="Argument">
-                <stringProp name="Argument.name">WORD_LIST</stringProp>
-                <stringProp name="Argument.value">100K_words_en.txt</stringProp>
-                <stringProp name="Argument.metadata">=</stringProp>
-              </elementProp>
               <elementProp name="COMMIT_AT_END" elementType="Argument">
                 <stringProp name="Argument.name">COMMIT_AT_END</stringProp>
                 <stringProp name="Argument.value">true</stringProp>
@@ -82,6 +77,11 @@
               <elementProp name="ENDPOINT_TYPE" elementType="Argument">
                 <stringProp name="Argument.name">ENDPOINT_TYPE</stringProp>
                 <stringProp name="Argument.value">fusion</stringProp>
+                <stringProp name="Argument.metadata">=</stringProp>
+              </elementProp>
+              <elementProp name="FUSION_CONTENT_TYPE" elementType="Argument">
+                <stringProp name="Argument.name">FUSION_CONTENT_TYPE</stringProp>
+                <stringProp name="Argument.value">text/csv</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>

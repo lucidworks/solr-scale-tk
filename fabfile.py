@@ -2846,7 +2846,8 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
 API_PORT=8765
 API_STOP_PORT=7765
 API_STOP_KEY=fusion
-API_JAVA_OPTIONS=(%s -Xss256k -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true)
+RMI_HOST=`curl -s http://169.254.169.254/latest/meta-data/public-hostname`
+API_JAVA_OPTIONS=(%s -Xss256k -Djava.rmi.server.hostname=$RMI_HOST -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true)
 
 CONNECTORS_PORT=8763
 CONNECTORS_STOP_PORT=7763
@@ -3293,13 +3294,12 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
         pigFile = pig
     else:
         pigFile = 's3://solr-scale-tk/pig/'+pig
-    
+
     pigArgs = ['-p','INPUT='+input,
                '-p','RED='+str(numReducers),
                '-p','collection='+collection,
                '-p','batch='+str(batchSize),
-               '-p','zkHost='+zkHost,
-               '-p','JOB_JAR=s3://sstk-dev/lucidworks-pig-functions-2.2.1.jar']
+               '-p','zkHost='+zkHost]
 
     pigStep = _PigStep(stepName, pig_file=pigFile, pig_args=pigArgs)
     try:
@@ -3339,8 +3339,6 @@ def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s
         pipeline = collection+'-default'
 
     secureFusion = str(thruProxy) == 'True'
-
-    print("secureFusion? %s" % secureFusion)
 
     fusionEndpoint = ''
     for host in hosts:
@@ -3479,27 +3477,14 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     collection = 'perf'
 
-    fusion_new_collection(cluster,name=collection,rf=1,shards=n,conf='perf')
-    fusion_new_collection(cluster,name=collection+'_js',rf=1,shards=n,conf='perf_js')
+    repFact = 1
+    numShards = n * 2
+    fusion_new_collection(cluster,name=collection,rf=repFact,shards=numShards,conf='perf')
+    fusion_new_collection(cluster,name=collection+'_js',rf=repFact,shards=numShards,conf='perf_js')
 
     perfPipelineDef = """{
   "id" : "perf",
   "stages" : [ {
-    "type" : "field-mapping",
-    "id" : "mapping-default",
-    "mappings" : [ {
-      "source" : "/(.*?)lat(itude)?$/",
-      "target" : "$1_lat_lon",
-      "operation" : "move"
-    }, {
-      "source" : "/(.*?)lon(gitude)?$/",
-      "target" : "$1_lat_lon",
-      "operation" : "move"
-    } ],
-    "skip" : false,
-    "label" : "field-mapping",
-    "type" : "field-mapping"
-  }, {
     "type" : "solr-index",
     "id" : "perf-to-solr",
     "enforceSchema" : true,
@@ -3514,24 +3499,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     perfJsPipelineDef = """{
   "id" : "perf_js",
   "stages" : [ {
-    "type" : "field-mapping",
-    "id" : "perf-js-mapping-default",
-    "mappings" : [ {
-      "source" : "/(.*?)lat(itude)?$/",
-      "target" : "$1_lat_lon",
-      "operation" : "move"
-    }, {
-      "source" : "/(.*?)lon(gitude)?$/",
-      "target" : "$1_lat_lon",
-      "operation" : "move"
-    } ],
-    "skip" : false,
-    "label" : "field-mapping",
-    "type" : "field-mapping"
-  }, {
     "type" : "javascript-index",
     "id" : "perf-js-javascript",
-    "script" : "function(doc) { var id = doc.getId(); var api = doc.getFirstFieldValue('_lw_data_source_s'); if (!api) api = 'fusion_performance_tests'; doc.setId(id + '_' + api); doc.addField('logical_collection_s', api); doc.addField('display_name_s', api.slice(36)); return doc; }",
+    "script" : "function doWork(doc) { var id = doc.getId(); var api = doc.getFirstFieldValue('_lw_data_source_s'); if (!api) api = 'perf'; doc.setId(id + '_' + api); doc.addField('foo_s', api); return doc; }",
     "skip" : false,
     "label" : "JavaScript",
     "type" : "javascript-index"
@@ -3564,8 +3534,24 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
     tag_emr_instances(emrCluster,'Fusion Performance Testing',region,customTags='{"CostCenter":"eng"}')
+
+    # now run the performance test steps in the EMR workflow
+    fusion_perf_test_steps(emrCluster,cluster,collection,numShards,repFact,numReducers,bufferSize,region,maxWaitSecs,index_solr_too,enable_partition)
+
+    if keepRunning:
+        _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
+    else:
+        kill(cluster)
+        # terminate the EMR cluster when we're done
+        terminate_jobflow(emrCluster, region)
+
+def fusion_perf_test_steps(emrCluster,cluster,collection='perf',numShards=6,repFact=1,numReducers=18,bufferSize=3000,region='us-east-1',maxWaitSecs=2700,index_solr_too=False,enable_partition=None):
+
+    hosts = _lookup_hosts(cluster)
+
     clear_collection(cluster, collection)
     stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
+                                       pig='s3://sstk-dev/s3_to_fusion.pig',
                                        region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
 
     sstk_cfg = _get_config()
@@ -3577,21 +3563,35 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
         # job completed ...
+        _status('Finished indexing using pipeline: perf')
         _print_step_metrics(cluster, collection)
-        report_fusion_metrics(cluster, collection)
+        #report_fusion_metrics(cluster, collection)
+
+    # now do with a JavaScript stage
+    clear_collection(cluster, 'perf_js')
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf_js', collection='perf_js',
+                                       pig='s3://sstk-dev/s3_to_fusion.pig',
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
+    if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
+        # job completed ...
+        _status('Finished indexing using pipeline: perf_js')
+        _print_step_metrics(cluster, 'perf_js')
 
     # Solr indexing step
     if str(index_solr_too) == "True":
-        new_collection(cluster,name='perf-solr',rf=2,shards=n,existingConfName='perf')
+        new_collection(cluster,name='perf-solr',rf=repFact,shards=numShards,existingConfName='perf')
+        clear_collection(cluster, 'perf-solr')
         stepName = emr_run_indexing_job(emrCluster, cluster, collection='perf-solr',
-                                       region=region, reducers=numReducers, batch_size=bufferSize)
+                                        region=region, reducers=numReducers, batch_size=bufferSize)
         if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
             # job completed ...
             _print_step_metrics(cluster, 'perf-solr')
+            # have to compute this manually as the new Hadoop code doesn't send the indexed_at_tdt anymore
+            _status('Indexing directly to Solr completed.')
 
     if enable_partition is not None:
         _status('Running index perf test with time-based partitioning enabled ...')
-        fusion_new_collection(cluster,name='perf_tp',rf=2,shards=n,conf='perf')
+        fusion_new_collection(cluster,name='perf_tp',rf=repFact,shards=numShards,conf='perf')
         enablePartitionFeature = """{
           "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"30DAYS", "maxActivePartitions":1000, "deleteExpired":false
         }"""
@@ -3606,13 +3606,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
 
     # GC log analysis for fusion api service    _info("Starting gc log analysis")
     gc_log_analysis_api(cluster)
-
-    if keepRunning:
-        _warn('Keep running flag is true, so the provisioned EC2 nodes and EMR cluster will not be shut down. You are responsible for stopping these services manually using:\n\tfab kill:'+cluster+'\n\tfab terminate_jobflow:'+emrCluster)
-    else:
-        kill(cluster)
-        # terminate the EMR cluster when we're done
-        terminate_jobflow(emrCluster, region)
 
 def terminate_jobflow(emrCluster, region='us-east-1'):
     """
@@ -3695,6 +3688,7 @@ def report_fusion_metrics(cluster,collection):
     for h in hosts:
         metricsResp = _fusion_api(h, 'system/metrics?pattern='+metricName)
         metricsJson = json.loads(metricsResp)
+        print(metricsJson)
         count = long(metricsJson.get("counters").get(metricName).get("count"))
         _info('Pipeline at '+h+' processed '+str(count)+' docs')
         if count > 0:
@@ -4032,11 +4026,13 @@ spark.executor.extraClassPath      %s/%s
 
 def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', maxWaitSecs=2700):
     bufferSize = 3000
-    numReducers = 24
+    numReducers = 18
+    repFact = 1
+    numShards = 6
 
     hosts = _lookup_hosts(cluster)
     _status('Running index perf test with time-based partitioning enabled ...')
-    fusion_new_collection(cluster,name='perf_tp',rf=2,shards=n,conf='perf')
+    fusion_new_collection(cluster,name='perf_tp',rf=repFact,shards=numShards,conf='perf')
     enablePartitionFeature = """{
           "enabled":true, "timestampFieldName":"timestamp1_tdt", "timePeriod":"30DAYS", "maxActivePartitions":1000, "deleteExpired":false
         }"""

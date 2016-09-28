@@ -119,6 +119,10 @@
                                     <pattern>org.apache.commons.math3</pattern>
                                     <shadedPattern>shaded.apache.commons.math3</shadedPattern>
                                 </relocation>
+                                <relocation>
+                                    <pattern>org.apache.commons.csv</pattern>
+                                    <shadedPattern>shaded.apache.commons.csv</shadedPattern>
+                                </relocation>
                             </relocations>
                         </configuration>
                     </execution>
@@ -285,6 +289,11 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
             <version>3.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+            <version>1.0</version>
         </dependency>
     </dependencies>
 </project>
