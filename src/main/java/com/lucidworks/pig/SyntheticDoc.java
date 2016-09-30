@@ -1,6 +1,7 @@
 package com.lucidworks.pig;
 
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 import org.apache.pig.EvalFunc;
@@ -16,12 +17,17 @@ import org.apache.solr.common.SolrInputField;
 import com.lucidworks.IndexingSampler;
 import com.lucidworks.IndexingSampler.FieldSpec;
 
-import org.apache.solr.common.util.DateUtil;
-
 /**
  * A Pig UDF that creates synthetic documents for Solr performance benchmarking.
  */
 public class SyntheticDoc extends EvalFunc<DataBag> {
+
+  private static ThreadLocal<SimpleDateFormat> sdf = new ThreadLocal<SimpleDateFormat>() {
+    @Override
+    protected SimpleDateFormat initialValue() {
+      return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.'S'Z'");
+    }
+  };
 
     private BagFactory bagFactory = BagFactory.getInstance();
     private TupleFactory tupleFactory = TupleFactory.getInstance();
@@ -97,7 +103,7 @@ public class SyntheticDoc extends EvalFunc<DataBag> {
         return null;
       } else {
         if ("tdt".equals(suffix))
-          return DateUtil.getThreadLocalDateFormat().format((Date)val);
+          return sdf.get().format((Date)val);
         else if ("b".equals(suffix))
           return String.valueOf(val);
         else

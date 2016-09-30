@@ -15,9 +15,9 @@
         <stringProp name="ThreadGroup.on_sample_error">stoptestnow</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
-          <stringProp name="LoopController.loops">1000</stringProp>
+          <stringProp name="LoopController.loops">${__P(LOOPS_PER_THREAD,10)}</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">10</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(THREADS,1)}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">2</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
@@ -31,12 +31,12 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="ZK_HOST" elementType="Argument">
                 <stringProp name="Argument.name">ZK_HOST</stringProp>
-                <stringProp name="Argument.value">192.168.1.9:9983/lwfusion/3.0-SNAPSHOT/solr</stringProp>
+                <stringProp name="Argument.value">${__P(SOLR_ZK_HOST,)} </stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">sstk1</stringProp>
+                <stringProp name="Argument.value">${__P(COLLECTION,)} </stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
@@ -61,7 +61,7 @@
               </elementProp>
               <elementProp name="FUSION_QUERY_ENDPOINTS" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_QUERY_ENDPOINTS</stringProp>
-                <stringProp name="Argument.value">http://localhost:8765/api/v1/query-pipelines/${collection}-default/collections/${collection}</stringProp>
+                <stringProp name="Argument.value">${__P(FUSION_ENDPOINTS,)} </stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="FUSION_USER" elementType="Argument">

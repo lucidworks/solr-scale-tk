@@ -731,6 +731,10 @@ public class FusionPipelineClient {
       String baseUrl = fusionHost+queryPipelinePath;
       fusionSession.solrClient = new HttpSolrClient(baseUrl, httpClient);
     }
+
+    //log.info("Sending query to: "+fusionSession.solrClient.getBaseURL());
+
+    query.set("wt","xml");
     QueryRequest qreq = new QueryRequest(query);
     qreq.setResponseParser(new XMLResponseParser());
     QueryResponse qr = new QueryResponse(fusionSession.solrClient);

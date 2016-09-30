@@ -271,10 +271,12 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
       }
 
       if (cloudSolrClient != null) {
+        /*
         try {
           cloudSolrClient.shutdown();
         } catch (Exception ignore) {
         }
+        */
         cloudSolrClient = null;
         log.info("Shutdown CloudSolrClient.");
       }

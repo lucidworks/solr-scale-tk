@@ -62,6 +62,7 @@ _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
 _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion'
+_config['fusion_vers'] = '2.4.2'
 
 instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
                         'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
@@ -1085,7 +1086,7 @@ def _wait_for_emr_step_to_finish(emr, job_flow_id, stepId, stepName, maxWaitSecs
 
     return stepState
 
-def _wait_to_see_fusion_proxy_up(host, maxWaitSecs=30):
+def _wait_to_see_fusion_proxy_up(cluster, host, maxWaitSecs=30):
     waitTime = 0
     startedAt = time.time()
     isRunning = False
@@ -1106,35 +1107,50 @@ def _wait_to_see_fusion_proxy_up(host, maxWaitSecs=30):
 def _is_fusion_proxy_up(hostAndPort):
     isProxyUp = False
     try:
-        urllib2.urlopen(_HeadRequest('http://%s/' % hostAndPort))
+        urllib2.urlopen('http://%s/' % hostAndPort+'/api')
         _info('Fusion proxy at ' + hostAndPort + ' is online.')
         isProxyUp = True
+    except urllib2.HTTPError as e:
+        print(str(e))
+        isProxyUp = False
     except:
+        print(str(sys.exc_info()[0]))
         isProxyUp = False
 
     return isProxyUp
 
-def _wait_to_see_fusion_api_up(apiHost, maxWait):
+def _wait_to_see_fusion_api_up(cluster, apiHost, maxWait):
     waitTime = 0
     startedAt = time.time()
     isRunning = False
-    _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
+
+    if maxWait > 10:
+        _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
+
+    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
+    path = 'system/status' if fusionVers.startswith('3.') else 'system/ping'
     while isRunning is False and waitTime < int(maxWait):
         isRunning = False
         try:
-            pingResp = _fusion_api(apiHost, 'system/ping')
-        except:
-            _warn('ping '+apiHost+' failed due to '+str(sys.exc_info()[0])+'! Check status of Fusion and retry')
-            pingResp = 'error'
-
-        if pingResp == 'pong':
+            statusResp = _fusion_api(apiHost, path)
+            statusRespJson = json.loads(statusResp)
+            # if we get here, api is responding ...
             isRunning = True
+        except:
+            # make it JSON
+            statusResp = '{ "error": "'+str(sys.exc_info()[0])+'" }'
+            _warn('ping '+apiHost+' failed due to '+statusResp+'! Check status of Fusion and retry')
+
+        if isRunning:
             break
 
         if isRunning is False and int(maxWait) >= 15:
             time.sleep(15)
             waitTime = round(time.time() - startedAt)
             _status('Waited %d seconds so far to verify Fusion API is running on %s.' % (waitTime, apiHost))
+        else:
+            _status('Fusion API service is not running due to: '+statusResp)
+            break
 
     return isRunning
 
@@ -1368,7 +1384,7 @@ def new_ec2_instances(cluster,
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
     if purpose is None:
-        purpose = '?unknown?'
+        purpose = 'Solr/Fusion performance testing in a multi-node cluster.'
     description = 'Launched on '+nowStr+' by '+username+' for '+purpose
 
     customTagsJson = None
@@ -2579,52 +2595,6 @@ def reload_collection(cluster,collection):
     results = solr.search('*:*')                
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
-    
-def jmeter(solrCluster,jmxfile,jmeterCluster=None,collection=None,propertyfile=None,depsfolder=None,runname='jmeter-test'):
-    """
-    Upload and run a JMeter test plan against your cluster.
-    """
-    homeDir = _env(solrCluster, 'user_home')
-    jmeterDir = '%s/jmeter-2.11' % homeDir
-    jmeterTestDir = '%s/%s' % (homeDir, runname)
-    jmeterTestLogDir = '%s/logs' % jmeterTestDir
-    jmeterTestLogFile = '%s/jmeter.log' % jmeterTestLogDir
-
-    if collection is None:
-        _warn('No collection name specified, assuming same as solr cluster name')
-        collection = solrCluster
-    if jmeterCluster is None:
-        _warn('No jmeter cluster name specified, assuming same as solr cluster name')
-        jmeterCluster = solrCluster
-
-    cloud = _provider_api()
-    hosts = _cluster_hosts(cloud, jmeterCluster)
-    _info('Preparing to execute jmeter tests on cluster = %s and host = %s' % (jmeterCluster, hosts[0]))
-
-    zkHostStr = _read_cloud_env(solrCluster)['ZK_HOST'] # get the zkHost from the env on the server
-    _info("Using ZK host string: %s" % zkHostStr)
-
-    with settings(host_string=hosts[0]):
-        run ('mkdir -p %s' % jmeterTestLogDir)
-        # put ('target/solr-scale-tk-0.1.jar', '%s/lib/ext/' % jmeterDir)
-        if propertyfile is not None:
-            put (propertyfile, '%s/.' % jmeterTestDir)
-        if depsfolder is not None:
-            local ('tar -cvf dependencies.tar.gz -C %s %s' % (os.path.dirname(os.path.abspath(depsfolder)), os.path.basename(os.path.abspath(depsfolder))))
-            put ('dependencies.tar.gz', jmeterTestDir)
-            with cd(jmeterTestDir):
-                run ('tar -xvf dependencies.tar.gz')
-            local ('rm dependencies.tar.gz')
-        put(jmxfile, jmeterTestDir)
-        jmxFileName = os.path.basename(jmxfile)
-        if propertyfile is not None:
-            propFileName = os.path.basename(propertyfile)
-            with cd(jmeterTestDir):
-                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -q %s -n -t %s -j %s' % (collection, zkHostStr, jmeterDir, propFileName, jmxFileName, jmeterTestLogFile))
-        else:
-            with cd(jmeterTestDir):
-                run('export JVM_ARGS=\'-Dcommon.defaultCollection=%s -Dcommon.endpoint=%s\';%s/bin/jmeter -n -t %s -j %s' % (collection, zkHostStr, jmeterDir, jmxFileName, jmeterTestLogFile))
-        get(jmeterTestLogDir, '.')
 
 def restart_node(cluster,port,n=0):
     """
@@ -2841,7 +2811,12 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     # create the fusion.in.sh include file
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     # sstk starts Solr on 8984, so we need to change the connectors port
-    fusionConfigSh = ('''
+    fusionConfigSh = ''
+
+    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
+
+    if fusionVers.startswith("3."):
+        fusionConfigSh = ('''
 # Auto-generated config created by solr-scale-tk
 API_PORT=8765
 API_STOP_PORT=7765
@@ -2879,6 +2854,7 @@ SPARK_WORKER_JAVA_OPTIONS=(-Xmx2g -XX:MaxPermSize=256m -Dapple.awt.UIElement=tru
 # The FUSION_SOLR_ZK is used to locate the Solr cluster where Fusion
 # creates its internal collections (logs, metrics etc), and to change
 # solr configuration if expliticly asked via our APIs.
+ZOOKEEPER_PORT=2181
 FUSION_ZK=%s
 FUSION_SOLR_ZK=%s
 
@@ -2912,14 +2888,80 @@ GC_TUNE=(-XX:NewRatio=3 \
 	-XX:+ParallelRefProcEnabled)
 ''' % (apiJavaOpts, apiJavaOpts, zkHost, zkHost))
 
-    if yjp_path is not None:
-        fusionConfigSh += '\nAPI_JAVA_OPTIONS="$API_JAVA_OPTIONS -agentpath:'+yjp_path+'/bin/linux-x86-64/libyjpagent.so"\n'
+        if yjp_path is not None:
+            fusionConfigSh += '\nAPI_JAVA_OPTIONS="$API_JAVA_OPTIONS -agentpath:'+yjp_path+'/bin/linux-x86-64/libyjpagent.so"\n'
+
+    slashAt = zkHost.find('/')
+    fusionZk = zkHost if slashAt == -1 else zkHost[0:slashAt]
+    print('zkHost=%s, fusionZk=%s' % (zkHost, fusionZk))
+
+    agentPropsTemplate = """
+# Some defaults across all processes
+zk.connect=%s
+default.zk.connect=%s
+solr.zk.connect=%s
+default.solrZk.connect=%s
+
+# garbage collection options can be "cms", "g1", "throughput" or "parallel", "serial" or "none"
+default.gc = cms
+# enable garbage collection logs
+default.gcLog = true
+# number of seconds agent checks for a service to be up and ready before declaring failure
+default.startSecs = 180
+# supervisor's settings
+# set to "none" to disable supervisor
+default.supervision.type=standard
+default.supervision.startRetries=3
+default.supervision.pauseBeforeRestartSecs=3
+
+# Agent process
+agent.port = 8091
+
+# API service
+api.port = 8765
+api.stopPort = 7765
+api.jvmOptions=%s -Xss256k -Djava.rmi.server.hostname=%s -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true
+
+# Connectors service
+connectors.port = 8763
+connectors.stopPort = 7763
+connectors.jvmOptions=-Xmx1g -Xss256k
+
+# Zookeeper
+zookeeper.port = 9983
+zookeeper.start = true
+zookeeper.jvmOptions=-Xmx256m
+
+# Solr
+solr.port = 8983
+solr.stopPort = 7983
+solr.jvmOptions = -Xmx2g -Xss256k
+
+# Spark master
+spark-master.port = 8766
+spark-master.uiPort = 8767
+spark-master.jvmOptions = -Xmx512m
+
+# Spark worker
+spark-worker.port = 8769
+spark-worker.uiPort = 8770
+spark-worker.jvmOptions = -Xmx1g
+
+# UI
+ui.port = 8764
+ui.stopPort = 7764
+ui.jvmOptions = -Xmx512m
+"""
 
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak')
+            run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak || true')
             _status('Uploading config.sh includes file to '+host)
             _fab_append(fusionConf+'/config.sh', fusionConfigSh)
+            fusionAgentProps = agentPropsTemplate % (fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host)
+            run('mv '+fusionConf+'/agent.properties '+fusionConf+'/agent.properties.bak || true')
+            _status('Uploading agent.properties file to '+host)
+            _fab_append(fusionConf+'/agent.properties', fusionAgentProps)
 
     # start fusion, ui, connectors
     numApiNodes = int(api)
@@ -2985,7 +3027,7 @@ GC_TUNE=(-XX:NewRatio=3 \
                 if fusionUIUrl is None:
                     fusionUIUrl = 'http://'+host+':8764'
 
-    apiIsRunning = _wait_to_see_fusion_api_up(hosts[0], 180)
+    apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[0], 180)
     if apiIsRunning is False:
         _fatal('Fusion API not responding on '+hosts[0]+'! Consult the Fusion API log for errors.')
 
@@ -3057,10 +3099,11 @@ def fusion_setup(cluster,vers='2.4.2'):
 
     _info('\n\nFusion installed on %d hosts' % len(hosts))
 
-def fusion_demo(cluster, n=1, instance_type='m3.large', fusionVers='2.4.2'):
+def fusion_demo(cluster, n=1, instance_type='m3.large'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
+    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
     new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo',customTags='{"CostCenter":"eng"}')
     deploy_config(cluster,'perf','cloud')
     fusion_setup(cluster,fusionVers)
@@ -3441,6 +3484,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     hvmAmiId = _env(cluster, 'AWS_HVM_AMI_ID')
     _info('Starting Fusion cluster using HVM-based AMI: '+hvmAmiId)
 
+    """
     new_solrcloud(cluster,
                   n=n,
                   zkn=min(3,n),
@@ -3456,11 +3500,11 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
-
+    """
     hosts = _lookup_hosts(cluster)
 
     # make sure the proxy / UI service is up before making changes with the API
-    _wait_to_see_fusion_proxy_up(hosts[0], 60)
+    _wait_to_see_fusion_proxy_up(cluster, hosts[0], 60)
     _status('Fusion proxy / UI service is up, commencing with post-startup configuration steps ...')
 
     # set the initial password for the new Fusion cluster
@@ -3480,7 +3524,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     repFact = 1
     numShards = n * 2
     fusion_new_collection(cluster,name=collection,rf=repFact,shards=numShards,conf='perf')
+    _status('Created new collection: '+collection)
     fusion_new_collection(cluster,name=collection+'_js',rf=repFact,shards=numShards,conf='perf_js')
+    _status('Created new collection: '+collection+'_js')
 
     perfPipelineDef = """{
   "id" : "perf",
@@ -3629,11 +3675,21 @@ def fusion_api_up(cluster):
     """
     hosts = _lookup_hosts(cluster)
     for h in hosts:
-        isRunning = _wait_to_see_fusion_api_up(h, 1)
+        isRunning = _wait_to_see_fusion_api_up(cluster, h, 1)
         if isRunning:
             _info('Fusion API service is running on '+h)
         else:
             _info('Fusion API service is NOT responding on '+h)
+
+def fusion_proxy_up(cluster):
+    """
+    Test to see if the Fusion proxy service is running on each host in the cluster.
+    """
+    hosts = _lookup_hosts(cluster)
+    for h in hosts:
+        isRunning = _wait_to_see_fusion_proxy_up(cluster, h, 1)
+        if isRunning is False:
+            _info('Fusion Proxy/UI service is NOT responding on '+h)
 
 
 def estimate_indexing_throughput(cluster, collection, usePipeline=False):
@@ -3782,7 +3838,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
                 _status('Restarted API service on '+hosts[h]+' ... waiting up to 180 seconds to see it come back online.')
 
     for h in range(0,len(hosts)):
-        apiIsRunning = _wait_to_see_fusion_api_up(hosts[h], 180)
+        apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[h], 180)
         if apiIsRunning is False:
             _fatal('Fusion API not responding on '+hosts[h]+'! Consult the Fusion API log for errors.')
         else:
@@ -3836,11 +3892,13 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
     ec2.close()
         
 
-def setup_jmeter(cluster):
+def setup_jmeter(cluster,jmeterVers='3.0'):
     hosts = _lookup_hosts(cluster)
     # stage the JMeter binary on all hosts
-    remoteTarFile = 'apache-jmeter-2.13.tgz'
+    jmeterBase = 'apache-jmeter-'+jmeterVers
+    remoteTarFile = jmeterBase+'.tgz'
     sstkJarFile = 'solr-scale-tk-0.1-exe.jar'
+    downloadUrl = 'http://mirrors.ocf.berkeley.edu/apache//jmeter/binaries/apache-jmeter-'+jmeterVers+'.tgz'
 
     if os.path.isfile('target/'+sstkJarFile) is False:
         _fatal('target/'+sstkJarFile+' not found! Please do: mvn clean package before running this command')
@@ -3848,8 +3906,8 @@ def setup_jmeter(cluster):
     with settings(host_string=hosts[0]):
         _status('Uploading '+sstkJarFile+' to '+hosts[0]+' ... this may take a few minutes ...')
         put('target/solr-scale-tk-0.1-exe.jar', 'solr-scale-tk-0.1-exe.jar')
-        _status('Downloading JMeter 2.13 from Apache Mirror ...')
-        run('wget http://apache.cs.utah.edu/jmeter/binaries/apache-jmeter-2.13.tgz -O '+remoteTarFile)
+        _status('Downloading JMeter '+jmeterVers+' from Apache Mirror ...')
+        run('wget '+downloadUrl+' -O '+remoteTarFile)
         run('mkdir -p %s/.ssh' % user_home)
         put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
         run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
@@ -3861,7 +3919,8 @@ def setup_jmeter(cluster):
     for host in hosts:
         with settings(host_string=host):
             run('tar zxf '+remoteTarFile)
-            run('mv solr-scale-tk-0.1-exe.jar apache-jmeter-2.13/lib/ext')
+            run('ln -s '+jmeterBase+' jmeter')
+            run('mv solr-scale-tk-0.1-exe.jar jmeter/lib/ext')
 
 def update_jmeter_sstk_jar(cluster):
     hosts = _lookup_hosts(cluster)
@@ -3879,21 +3938,22 @@ def update_jmeter_sstk_jar(cluster):
                 run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), sstkJarFile, ssh_user, hosts[h], sstkJarFile))
     for host in hosts:
         with settings(host_string=host):
-            run('mv solr-scale-tk-0.1-exe.jar apache-jmeter-2.13/lib/ext')
+            run('mv solr-scale-tk-0.1-exe.jar jmeter/lib/ext')
 
-
-
-def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword,mode='fusion',numThreads=5,numQueriesPerThread=10000,pipeline=None,thruProxy=True):
+def run_jmeter(cluster,fusionCluster,testPlan,collection,fusionPassword=None,mode='fusion',numThreads=5,numQueriesPerThread=10000,pipeline=None,thruProxy=True):
     if os.path.isfile(testPlan) is False:
         _fatal('JMeter test plan file '+testPlan+' not found!')
     hosts = _lookup_hosts(cluster)
 
-    remoteJmeterDir = 'apache-jmeter-2.13'
+    if fusionPassword is None:
+        fusionPassword = "password123"
+
+    remoteJmeterDir = 'jmeter'
 
     if pipeline is None:
         pipeline = collection+'-default'
 
-    goThruProxy = bool(thruProxy)
+    goThruProxy = thruProxy == "true" or thruProxy == "True"
     fusionEndpoint = ''
     if cluster != fusionCluster:
         fusionHosts = _lookup_hosts(fusionCluster)
@@ -3929,20 +3989,20 @@ log4j.logger.shaded.apache.http.client=DEBUG
     for host in hosts:
         with settings(host_string=host):
             put(testPlan,testPlan)
-            run('rm -f jmeter.log jmeter.out slow_queries.txt no_results.txt || true')
+            run('rm -f jmeter.log root.log jmeter.out slow_queries.txt no_results.txt || true')
             run('rm -f ' + remoteLog4JPropsFile)
             _fab_append(remoteLog4JPropsFile, log4Jcfg)
 
             killJmeter = """
-CHECK_PID=`ps auxww | grep -w java | grep -v grep | awk '{print $2}' | sort -r | tr -d ' '`
+CHECK_PID=`ps auxww | grep -w ApacheJMeter | grep -v grep | awk '{print $2}' | sort -r | tr -d ' '`
 if [ "$CHECK_PID" != "" ]; then
   kill -9 $CHECK_PID
   echo "killed $CHECK_PID"
 fi
             """
             logOpts = '-Dlog4j.debug -Dlog4j.configuration=file:'+remoteLog4JPropsFile
-            rmiOpts = 'export JVM_ARGS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18984 -Dcom.sun.management.jmxremote.rmi.port=18984 -Djava.rmi.server.hostname='+host+' '+logOpts+'"'
-            startJmeter = ('%s/bin/jmeter -JqueryThreads=%d -JnumQueriesPerThread=%d -JZK_HOST=%s -JCOLLECTION=%s -JMODE=%s "-JFUSION_QUERY_ENDPOINTS=%s" -JFUSION_PASS=%s -n -t %s' % (remoteJmeterDir, numThreads, numQueriesPerThread, zkHost, collection, mode, fusionEndpoint, fusionPassword, testPlan))
+            rmiOpts = 'export JVM_ARGS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=15984 -Dcom.sun.management.jmxremote.rmi.port=15984 -Djava.rmi.server.hostname='+host+' '+logOpts+'"'
+            startJmeter = ('%s/bin/jmeter -JqueryThreads=%d -JnumQueriesPerThread=%d -n -t %s' % (remoteJmeterDir, numThreads, numQueriesPerThread, testPlan))
             runJmeterSh=("""#!/bin/sh
 %s
 %s
@@ -3957,7 +4017,7 @@ def print_fusion_endpoints(cluster,collection,pipeline=None,thruProxy=True):
     if pipeline is None:
         pipeline = collection+'-default'
 
-    goThruProxy = bool(thruProxy)
+    goThruProxy = str(thruProxy) == 'true' or str(thruProxy) == 'True'
     fusionEndpoint = ''
     fusionHosts = _lookup_hosts(cluster)
     for fh in fusionHosts:

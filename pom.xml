@@ -73,6 +73,7 @@
                             </filters>
                             <artifactSet>
                                 <excludes>
+                                    <exclude>org.apache.curator:*</exclude>
                                     <exclude>org.apache.hadoop:*</exclude>
                                     <exclude>org.apache.pig:*</exclude>
                                     <exclude>org.bouncycastle:*</exclude>
@@ -83,6 +84,14 @@
                                 </excludes>
                             </artifactSet>
                             <relocations>
+                                <relocation>
+                                    <pattern>org.jboss.netty</pattern>
+                                    <shadedPattern>shaded.jboss.netty</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.apache.zookeeper</pattern>
+                                    <shadedPattern>shaded.apache.zookeeper</shadedPattern>
+                                </relocation>
                                 <relocation>
                                     <pattern>org.apache.http</pattern>
                                     <shadedPattern>shaded.apache.http</shadedPattern>
@@ -168,7 +177,7 @@
         <dependency>
             <groupId>org.apache.solr</groupId>
             <artifactId>solr-solrj</artifactId>
-            <version>5.5.2</version>
+            <version>6.1.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.codehaus.woodstox</groupId>

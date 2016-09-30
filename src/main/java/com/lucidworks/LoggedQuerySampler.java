@@ -506,10 +506,11 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
           reporter.stop();
         }
 
+        /*
         try {
           cloudSolrClient.shutdown();
-        } catch (Exception ignore) {
-        }
+        } catch (Exception ignore) {}
+        */
         cloudSolrClient = null;
         log.info("Shutdown CloudSolrClient.");
       }
