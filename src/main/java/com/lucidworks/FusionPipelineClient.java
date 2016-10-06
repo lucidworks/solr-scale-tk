@@ -60,6 +60,7 @@ public class FusionPipelineClient {
   private static final Log log = LogFactory.getLog(FusionPipelineClient.class);
 
   public static final String JSON_CONTENT_TYPE = "application/json";
+  public static final String PIPELINE_DOC_CONTENT_TYPE = "application/vnd.lucidworks-document";
 
   public static final String LWWW_JAAS_FILE = "lww.jaas.file";
   public static final String LWWW_JAAS_APPNAME = "lww.jaas.appname";
@@ -297,7 +298,7 @@ public class FusionPipelineClient {
       }
 
       HttpPost postRequest = new HttpPost(sessionApiUrl.toURI());
-      postRequest.setEntity(new StringEntity(jsonString, ContentType.create("application/json", StandardCharsets.UTF_8)));
+      postRequest.setEntity(new StringEntity(jsonString, ContentType.create(JSON_CONTENT_TYPE, StandardCharsets.UTF_8)));
 
       HttpClientContext context = HttpClientContext.create();
       context.setCookieStore(cookieStore);
@@ -467,7 +468,7 @@ public class FusionPipelineClient {
   }
 
   public void postBatchToPipeline(String pipelinePath, List docs) throws Exception {
-    postBatchToPipeline(pipelinePath, docs, "application/json");
+    postBatchToPipeline(pipelinePath, docs, PIPELINE_DOC_CONTENT_TYPE);
   }
 
   public void postBatchToPipeline(String pipelinePath, List docs, String contentType) throws Exception {
@@ -619,7 +620,8 @@ public class FusionPipelineClient {
     }
 
     HttpPost postRequest = new HttpPost(postUrl);
-    EntityTemplate et = new EntityTemplate(newContentProducer(contentType, docs));
+    ContentProducer cp = newContentProducer(contentType, docs);
+    EntityTemplate et = new EntityTemplate(cp);
     et.setContentType(contentType);
     et.setContentEncoding(StandardCharsets.UTF_8.name());
     postRequest.setEntity(et);
@@ -697,10 +699,11 @@ public class FusionPipelineClient {
   protected ContentProducer newContentProducer(String contentType, List docs) {
     if ("text/csv".equals(contentType)) {
       return new CsvContentProducer(docs);
-    } else if ("application/json".equals(contentType)) {
+    } else if (JSON_CONTENT_TYPE.equals(contentType) || PIPELINE_DOC_CONTENT_TYPE.equals(contentType)) {
       return new JacksonContentProducer(jsonObjectMapper, docs);
     } else {
-      throw new IllegalArgumentException("Content type "+contentType+" not supported! Use text/csv or application/json.");
+      throw new IllegalArgumentException("Content type "+contentType+
+              " not supported! Use text/csv, application/json, or "+PIPELINE_DOC_CONTENT_TYPE);
     }
   }
 
@@ -734,7 +737,7 @@ public class FusionPipelineClient {
 
     //log.info("Sending query to: "+fusionSession.solrClient.getBaseURL());
 
-    query.set("wt","xml");
+    query.set("wt", "xml");
     QueryRequest qreq = new QueryRequest(query);
     qreq.setResponseParser(new XMLResponseParser());
     QueryResponse qr = new QueryResponse(fusionSession.solrClient);

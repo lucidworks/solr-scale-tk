@@ -82,7 +82,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
   protected boolean fusionAuthEnabled = true;
 
   public FusionIndexPipelineStoreFunc(String endpoints, String batchSize, String fusionAuthEnabled, String fusionUser, String fusionPass, String fusionRealm) throws SolrServerException, IOException {
-    this(endpoints, batchSize, fusionAuthEnabled, fusionUser, fusionPass, fusionRealm, FusionPipelineClient.JSON_CONTENT_TYPE);
+    this(endpoints, batchSize, fusionAuthEnabled, fusionUser, fusionPass, fusionRealm, FusionPipelineClient.PIPELINE_DOC_CONTENT_TYPE);
   }
 
   public FusionIndexPipelineStoreFunc(String endpoints, String batchSize, String fusionAuthEnabled, String fusionUser, String fusionPass, String fusionRealm, String contentType) throws SolrServerException, IOException {
@@ -92,7 +92,7 @@ public class FusionIndexPipelineStoreFunc extends StoreFunc {
     this.endpoints = endpoints;
     this.batchSize = Integer.parseInt(batchSize);
     this.fusionAuthEnabled = "true".equals(fusionAuthEnabled);
-    this.contentType = (contentType != null) ? contentType : FusionPipelineClient.JSON_CONTENT_TYPE;
+    this.contentType = (contentType != null) ? contentType : FusionPipelineClient.PIPELINE_DOC_CONTENT_TYPE;
   }
 
   public void putNext(Tuple input) throws IOException {

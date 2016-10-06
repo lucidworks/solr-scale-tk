@@ -132,7 +132,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
     defaultParameters.addArgument("FUSION_INDEX_PIPELINE",
             "http://localhost:8765/lucid/api/v1/index-pipelines/conn_logging/collections/${collection}/index");
     defaultParameters.addArgument("ENDPOINT_TYPE", "fusion");
-    defaultParameters.addArgument("FUSION_CONTENT_TYPE", FusionPipelineClient.JSON_CONTENT_TYPE);
+    defaultParameters.addArgument("FUSION_CONTENT_TYPE", FusionPipelineClient.PIPELINE_DOC_CONTENT_TYPE);
     return defaultParameters;
   }
 
@@ -298,7 +298,7 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
     String idPrefix = context.getParameter("ID_PREFIX");
     String threadId = context.getParameter("THREAD_ID");
-    String contentType = context.getParameter("FUSION_CONTENT_TYPE","application/json");
+    String contentType = context.getParameter("FUSION_CONTENT_TYPE",FusionPipelineClient.PIPELINE_DOC_CONTENT_TYPE);
     int batchSize = context.getIntParameter("BATCH_SIZE", 100);
     int numDocsPerThread = context.getIntParameter("NUM_DOCS_PER_LOOP", 10000);
     if (numDocsPerThread < batchSize)

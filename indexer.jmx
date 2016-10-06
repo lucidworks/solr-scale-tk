@@ -41,12 +41,12 @@
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
                 <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">1</stringProp>
+                <stringProp name="Argument.value">100</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
                 <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">1000</stringProp>
+                <stringProp name="Argument.value">100</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="THREAD_ID" elementType="Argument">
@@ -81,7 +81,7 @@
               </elementProp>
               <elementProp name="FUSION_CONTENT_TYPE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_CONTENT_TYPE</stringProp>
-                <stringProp name="Argument.value">application/json</stringProp>
+                <stringProp name="Argument.value">text/csv</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>

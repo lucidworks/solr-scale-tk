@@ -2959,9 +2959,9 @@ ui.jvmOptions = -Xmx512m
             _status('Uploading config.sh includes file to '+host)
             _fab_append(fusionConf+'/config.sh', fusionConfigSh)
             fusionAgentProps = agentPropsTemplate % (fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host)
-            run('mv '+fusionConf+'/agent.properties '+fusionConf+'/agent.properties.bak || true')
-            _status('Uploading agent.properties file to '+host)
-            _fab_append(fusionConf+'/agent.properties', fusionAgentProps)
+            run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
+            _status('Uploading fusion.properties file to '+host)
+            _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
 
     # start fusion, ui, connectors
     numApiNodes = int(api)
