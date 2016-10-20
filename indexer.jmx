@@ -36,7 +36,7 @@
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">sstk1</stringProp>
+                <stringProp name="Argument.value">perf</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
@@ -71,7 +71,7 @@
               </elementProp>
               <elementProp name="FUSION_INDEX_PIPELINE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_INDEX_PIPELINE</stringProp>
-                <stringProp name="Argument.value">http://localhost:8765/api/v1/index-pipelines/${collection}-default/collections/${collection}/index</stringProp>
+                <stringProp name="Argument.value">http://ec2-52-23-243-57.compute-1.amazonaws.com:8765/api/v1/index-pipelines/perf/collections/perf/index</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="ENDPOINT_TYPE" elementType="Argument">
@@ -81,7 +81,7 @@
               </elementProp>
               <elementProp name="FUSION_CONTENT_TYPE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_CONTENT_TYPE</stringProp>
-                <stringProp name="Argument.value">text/csv</stringProp>
+                <stringProp name="Argument.value">application/vnd.lucidworks-document</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>

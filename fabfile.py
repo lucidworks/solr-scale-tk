@@ -31,7 +31,7 @@ import boto.vpc
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_HVM_AMI_ID = 'ami-7b28466c'
+AWS_HVM_AMI_ID = 'ami-f11b48e6'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'r3.large'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -1133,7 +1133,6 @@ def _wait_to_see_fusion_api_up(cluster, apiHost, maxWait):
         isRunning = False
         try:
             statusResp = _fusion_api(apiHost, path)
-            statusRespJson = json.loads(statusResp)
             # if we get here, api is responding ...
             isRunning = True
         except:
@@ -2815,7 +2814,7 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
 
     fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
 
-    if fusionVers.startswith("3."):
+    if fusionVers.startswith("3.") is False:
         fusionConfigSh = ('''
 # Auto-generated config created by solr-scale-tk
 API_PORT=8765
@@ -2953,6 +2952,7 @@ ui.stopPort = 7764
 ui.jvmOptions = -Xmx512m
 """
 
+    cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
             run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak || true')
@@ -2962,6 +2962,8 @@ ui.jvmOptions = -Xmx512m
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
+            put('fusion-conf.sh', cloudDir+'/fusion-conf.sh')
+            run('sh '+cloudDir+'/fusion-conf.sh')
 
     # start fusion, ui, connectors
     numApiNodes = int(api)
@@ -3484,7 +3486,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     hvmAmiId = _env(cluster, 'AWS_HVM_AMI_ID')
     _info('Starting Fusion cluster using HVM-based AMI: '+hvmAmiId)
 
-    """
     new_solrcloud(cluster,
                   n=n,
                   zkn=min(3,n),
@@ -3500,7 +3501,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     deploy_config(cluster,'perf','perf_js')
     _status('Starting Fusion services across cluster ...')
     fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
-    """
     hosts = _lookup_hosts(cluster)
 
     # make sure the proxy / UI service is up before making changes with the API
@@ -4105,3 +4105,28 @@ def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', max
     if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster ) == 'COMPLETED':
         # job completed ...
         _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
+
+def fusion_index_signals(cluster,numReducers=18,bufferSize=3000,region='us-east-1',maxWaitSecs=7200):
+
+    hosts = _lookup_hosts(cluster)
+
+    emrCluster = cluster + 'EMR'
+    collection = 'perf_signals'
+
+    # enable the signals feature on the perf collection
+    enableSignalsFeature = '{"enabled":true, "params":{"replicationFactor":1,"numShards":9,"maxShardsPerNode":3}}'
+    _fusion_api(hosts[0], 'collections/perf/features/signals', 'PUT', enableSignalsFeature)
+    clear_collection(cluster, collection)
+    clear_collection(cluster, collection+'_aggr')
+    stepName = emr_fusion_indexing_job(emrCluster, cluster, pipeline='perf', collection=collection,
+                                       input='s3://solr-scale-tk/pig/output/syn130m',
+                                       pig='s3://sstk-dev/s3_to_fusion_sigs.pig',
+                                       region=region, reducers=numReducers, batch_size=bufferSize, thruProxy='False')
+    sstk_cfg = _get_config()
+    job_flow_id = sstk_cfg['emr'][emrCluster]['job_flow_id']
+    _info('EMR job flow is '+job_flow_id)
+
+    emr = boto.emr.connect_to_region(region)
+    if _check_step_status(emr, job_flow_id, stepName, maxWaitSecs, cluster)== 'COMPLETED':
+        _status('Finished indexing 130m signals to '+collection)
+        _print_step_metrics(cluster, collection)

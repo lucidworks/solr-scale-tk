@@ -10,7 +10,6 @@ import org.apache.jmeter.samplers.SampleResult;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrClient;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
-import org.apache.solr.client.solrj.impl.CloudSolrClient.Builder;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
 import org.apache.solr.client.solrj.response.FieldStatsInfo;
 import org.apache.solr.client.solrj.response.QueryResponse;
@@ -23,7 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class QuerySampler extends AbstractJavaSamplerClient implements Serializable {
@@ -356,6 +354,7 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
         log.info("Connecting to SolrCloud using zkHost: " + zkHost);
         String collection = params.get("COLLECTION").trim();
 
+        /*
         CloudSolrClient.Builder builder = new CloudSolrClient.Builder();
         int slashAt = zkHost.indexOf("/");
         String chroot = null;
@@ -370,6 +369,8 @@ public class QuerySampler extends AbstractJavaSamplerClient implements Serializa
         } else {
           cloudSolrClient = builder.withZkHost(zkHosts).build();
         }
+        */
+        cloudSolrClient = new CloudSolrClient(zkHost);
         cloudSolrClient.setDefaultCollection(collection);
         cloudSolrClient.connect();
         HttpClientUtil.setMaxConnections(cloudSolrClient.getLbClient().getHttpClient(), 500);

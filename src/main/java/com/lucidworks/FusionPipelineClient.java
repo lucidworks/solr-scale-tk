@@ -619,6 +619,8 @@ public class FusionPipelineClient {
       postUrl += "?echo=false";
     }
 
+    log.info("POSTing "+docs.size()+" using content type "+contentType+" to: "+postUrl);
+
     HttpPost postRequest = new HttpPost(postUrl);
     ContentProducer cp = newContentProducer(contentType, docs);
     EntityTemplate et = new EntityTemplate(cp);
