@@ -1451,7 +1451,7 @@ def new_ec2_instances(cluster,
     sstk_cfg['clusters'][cluster] = { 'provider':'ec2', 'name':cluster, 'hosts':hosts, 'username':username }
     _save_config()
 
-    _info('\n\n*** %d EC2 instances have been provisioned ***\n\n' % len(hosts))
+    _info('\n\n*** %d EC2 instances have been provisioned for %s ***\n\n' % (len(hosts),cluster))
 
     return hosts
 
@@ -2756,6 +2756,8 @@ def _fusion_api(host, apiEndpoint, method='GET', json=None):
         try:
             postResp = urllib2.urlopen(req, json)
             resp = "OK"
+        except urllib2.URLError as ue:
+            _error('POST to '+postToApiUrl+' failed due to: '+str(ue)+'\n'+ue.read())
         except urllib2.HTTPError as e:
             _error('POST to '+postToApiUrl+' failed due to: '+str(e)+'\n'+e.read())
 
@@ -2952,6 +2954,20 @@ ui.stopPort = 7764
 ui.jvmOptions = -Xmx512m
 """
 
+    fusionConfSh = """
+#!/bin/bash
+FUSION=%s
+if [ -d /vol0 ]; then
+    if [ ! -d /vol0/fusion-data ]; then
+      mkdir /vol0/fusion-data || true
+      mv $FUSION/data /vol0/fusion-data/data
+      ln -s /vol0/fusion-data/data $FUSION/data
+      mv $FUSION/var /vol0/fusion-data/var
+      ln -s /vol0/fusion-data/var $FUSION/var
+    fi
+fi
+""" % fusionHome
+
     cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
@@ -2962,7 +2978,8 @@ ui.jvmOptions = -Xmx512m
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
-            put('fusion-conf.sh', cloudDir+'/fusion-conf.sh')
+            run('rm '+cloudDir+'/fusion-conf.sh || true')
+            _fab_append(cloudDir+'/fusion-conf.sh', fusionConfSh)
             run('sh '+cloudDir+'/fusion-conf.sh')
 
     # start fusion, ui, connectors
@@ -2992,7 +3009,7 @@ ui.jvmOptions = -Xmx512m
 
     # start Spark Workers on all nodes where there will be an API
     _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-    for host in hosts[0:numApiNodes]:
+    for host in hosts:
         with settings(host_string=host), hide('output', 'running'):
             run(fusionBin+'/spark-worker stop || true')
             _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
@@ -3518,7 +3535,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         _error('POST to '+postToApiUrl+' failed due to: '+str(e)+'\n'+e.read())
     except urllib2.URLError as ue:
         _error('POST to '+postToApiUrl+' failed due to: '+str(ue))
-
     collection = 'perf'
 
     repFact = 1
