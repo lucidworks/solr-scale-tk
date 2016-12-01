@@ -918,7 +918,7 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
     is_solr_up(cluster)
     _info('Rolling restart completed.')
 
-def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
+def _setup_instance_stores(cluster, hosts, numInstStores, ami, xdevs):
     numStores = int(numInstStores)
     if numStores <= 0:
         return
@@ -940,7 +940,8 @@ def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
                     sudo('echo "/dev/%s /vol%d ext4 defaults 0 2" >> /etc/fstab' % (xdevs[v], v))
                     sudo('mount /vol%d' % v)
                 # grant ownership to our ssh user
-                sudo('chown -R %s: /vol%d' % (ssh_user, v))
+                sshUser = _env(cluster, 'ssh_user')
+                sudo('chown -R %s: /vol%d' % (sshUser, v))
 
 # TODO: collectd stuff is still useful, but meta node is replaced by Fusion
 def _integ_host_with_meta(cluster, host, metaHost):
@@ -1426,7 +1427,7 @@ def new_ec2_instances(cluster,
     # mount the instance stores on /vol#
     if setupInstanceStores:
         _status('Making instance store file systems ... please be patient')
-        _setup_instance_stores(hosts, numStores, ami, xdevs)
+        _setup_instance_stores(cluster, hosts, numStores, ami, xdevs)
     else:
         _warn('Skipping instance store configuration!')
 
@@ -2565,7 +2566,7 @@ def setup_instance_stores(cluster,numInstanceStores=1):
     if _verify_ssh_connectivity(hosts, 180) is False:
         _fatal('Failed to verify SSH connectivity to all hosts!')
     xdevs = ['xvdb','xvdc','xvdd','xvde']
-    _setup_instance_stores(hosts, int(numInstanceStores), _env(cluster, 'AWS_HVM_AMI_ID'), xdevs)
+    _setup_instance_stores(cluster, hosts, int(numInstanceStores), _env(cluster, 'AWS_HVM_AMI_ID'), xdevs)
     cloud.close()    
 
 def reload_collection(cluster,collection):
