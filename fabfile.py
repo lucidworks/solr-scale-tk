@@ -3553,9 +3553,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     fusion_new_collection(cluster,name=collection+'_js',rf=repFact,shards=numShards,conf='perf_js')
     _status('Created new collection: '+collection+'_js')
 
-
-    print "xxxx"
-
     perfPipelineDef = """{
   "id" : "perf",
   "stages" : [ {
@@ -3590,9 +3587,6 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
   } ]
 }"""
     _fusion_api(hosts[0], 'index-pipelines', 'POST', perfJsPipelineDef)
-
-
-    print "aaaaa"
 
     # raise the buffer size for high-volume indexing into Solr
     bufferSize = 3000
