@@ -3,7 +3,7 @@ from fabric.exceptions import NetworkError as _NetworkError
 from fabric.colors import green as _green, blue as _blue, red as _red, yellow as _yellow
 from fabric.contrib.files import append as _fab_append, exists as _fab_exists
 from fabric.contrib.console import confirm
-from StringIO import StringIO as _strio    
+from StringIO import StringIO as _strio
 import boto
 from boto.s3.key import Key as _S3Key
 import boto.emr
@@ -257,7 +257,7 @@ def _find_instances_in_cluster(cloud, cluster, onlyIfRunning=True):
 def _find_all_instances(cloud, onlyIfRunning=True):
     tagged = {}
     byTag = cloud.get_all_instances(filters={'tag-key':'cluster','tag-key':'username'})
-        
+
     for rsrv in byTag:
         for inst in rsrv.instances:
             if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
@@ -277,7 +277,7 @@ def _find_user_instances(cloud, username, onlyIfRunning=True):
         numFound = len(byTag)
         if numFound > 0:
             _warn('AWS API is acting flakey! First call to find instances for '+username+' found 0, now it found: '+str(numFound))
-        
+
     for rsrv in byTag:
         for inst in rsrv.instances:
             if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
@@ -628,7 +628,7 @@ def _wait_to_see_solr_up_on_hosts(hostAndPorts, maxWait=180):
                     try:
                         downSet.remove(srvr)
                     except:
-                        pass                    
+                        pass
                 else:
                     allUp = False
                     downSet.add(srvr)
@@ -684,9 +684,9 @@ def _get_instance_type(cloud, cluster):
     return None
 
 def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
-    
+
     _status('Determining Solr Java memory options for running %s Solr nodes on a %s' % (numNodesPerHost, instance_type))
-    
+
     if instance_type is None or numNodesPerHost <= 0: # garbage in, just use default
         return '-Xms512m -Xmx512m'
 
@@ -767,16 +767,16 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
             mx = '4g'
         else:
             mx = '2g'
-        
+
     if showWarn:
-        _warn('%d nodes on an %s is probably too many! Consider using a larger instance type.' % (numNodesPerHost, instance_type))    
+        _warn('%d nodes on an %s is probably too many! Consider using a larger instance type.' % (numNodesPerHost, instance_type))
 
     mem_settings = ('-Xms%s -Xmx%s' % (mx, mx))
 
     _info('Using Java heap settings: '+mem_settings)
 
     return mem_settings
-        
+
 def _uptime(launch_time):
     launchTime = dateutil.parser.parse(launch_time)
     now = datetime.datetime.utcnow()
@@ -784,7 +784,7 @@ def _uptime(launch_time):
     deltaStr = str(diff)
     dotAt = deltaStr.find('.')
     if dotAt != -1:
-        deltaStr = deltaStr[0:dotAt]                
+        deltaStr = deltaStr[0:dotAt]
     return ' for '+deltaStr
 
 def _parse_env_data(envData):
@@ -807,7 +807,7 @@ def _parse_env_data(envData):
                 cloudEnvVars[name] = valu
 
     return cloudEnvVars
-    
+
 def _read_cloud_env(cluster):
     sstkEnvScript = _env(cluster, 'SSTK_ENV')
     hosts = _lookup_hosts(cluster, False)
@@ -816,7 +816,7 @@ def _read_cloud_env(cluster):
         get(sstkEnvScript, cloudEnvReader)
         envData = cloudEnvReader.getvalue()
     return _parse_env_data(envData)
-    
+
 def _num_solr_nodes_per_host(cluster):
     cloudEnv = _read_cloud_env(cluster)
     return 1 if cloudEnv.has_key('NODES_PER_HOST') is False else int(cloudEnv['NODES_PER_HOST'])
@@ -945,7 +945,7 @@ def _setup_instance_stores(hosts, numInstStores, ami, xdevs):
 # TODO: collectd stuff is still useful, but meta node is replaced by Fusion
 def _integ_host_with_meta(cluster, host, metaHost):
     # setup logging on the Solr server based on whether there is a meta host
-    # running rabbitmq and the logstash4solr stuff   
+    # running rabbitmq and the logstash4solr stuff
     if metaHost is not None:
         log4jCfg = _gen_log4j_cfg(host, metaHost, 'WARN')
     else:
@@ -960,7 +960,7 @@ def _integ_host_with_meta(cluster, host, metaHost):
     if metaHost is not None:
         sudo('rm -f /etc/collectd.conf')
         collectdNetwork = '''FQDNLookup   true
-    Interval     10 
+    Interval     10
     LoadPlugin logfile
     <Plugin logfile>
     LogLevel info
@@ -1246,7 +1246,7 @@ def new_ec2_instances(cluster,
       skipStores (optional): Skips creation and mounting of filesystems; useful when you don't
         need access to the additional instance storage devices.
       purpose (optional): short description of why you're starting this cluster
-      
+
 
     Returns:
       hosts (list): A list of public DNS names for the instances launched by this command.
@@ -1273,11 +1273,11 @@ def new_ec2_instances(cluster,
     if (instance_type.startswith('i2.') or instance_type.startswith('r3.')) and ami != hvmAmiId:
         ami = hvmAmiId
         _warn('Must use ' + ami + ' for '+instance_type+' instances!')
-    
+
     if instance_type.find('m1.') != -1 and instance_type != 'm1.small':
-        _fatal('''Please use the m3.* instance types instead of m1! 
+        _fatal('''Please use the m3.* instance types instead of m1!
         The m3 instance types are usually better and less expensive
-        as Amazon is phasing out the m1 types.''')    
+        as Amazon is phasing out the m1 types.''')
 
     ec2 = _provider_api(cluster)
     num = int(n)
@@ -1311,11 +1311,11 @@ def new_ec2_instances(cluster,
     numInstanceStores = instanceStoresByType[instance_type]
     if numInstanceStores is None:
         _fatal('Must specify the number of instance stores for instance instance_type: ' % instance_type)
-    
+
     numStores = int(numInstanceStores)
     if numStores > 4:
         _fatal('Too many instance stores requested! Please specify an int between 0-4.')
-        
+
     # warn the user that they are configuring instances without any additional instance storage configured
     # TODO: need to build up a dict containing instance type metadata
     if numStores == 0:
@@ -1326,7 +1326,7 @@ def new_ec2_instances(cluster,
     devs = ['sdb','sdc','sdd','sde']
     xdevs = ['xvdb','xvdc','xvdd','xvde']
 
-    bdm = None   
+    bdm = None
     if setupInstanceStores is True and numStores > 0:
         bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
         for s in range(0,numStores):
@@ -1375,9 +1375,9 @@ def new_ec2_instances(cluster,
                          placement_group=placement_group,
                          subnet_id = vpcSubnetId,
                          security_group_ids=[vpcSecurityGroupId])
-    
+
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
-    
+
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
@@ -1557,7 +1557,7 @@ export SOLR_JAVA_MEM="%s"
     numStores = instanceStoresByType[instance_type]
     if numStores is None:
         numStores = 1
-        
+
     solrHostAndPorts = []
     for host in hosts:
         with settings(host_string=host), hide('output', 'running', 'warnings'):
@@ -1573,7 +1573,7 @@ export SOLR_JAVA_MEM="%s"
                 _status('Running setup on '+host+': ' + remoteSetupCmd)
                 run(remoteSetupCmd)
                 time.sleep(2)
-                
+
             for x in range(0, numNodesPerHost):
                 solrPortUniq = str(84 + x)
                 solrPort = '89' + solrPortUniq
@@ -1711,7 +1711,7 @@ def setup_zk_ensemble(cluster):
     """
     cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
-    _verify_ssh_connectivity(hosts)    
+    _verify_ssh_connectivity(hosts)
     zkHosts = _zk_ensemble(cluster, hosts)
     _info('Successfully launched new ZooKeeper ensemble')
     return zkHosts
@@ -1782,12 +1782,12 @@ def stop_solrcloud(cluster):
     numNodes = _num_solr_nodes_per_host(cluster)
     binSolrScript = _env(cluster, 'solr_tip') + '/bin/solr'
     for h in hosts:
-        with settings(host_string=h), hide('output', 'running', 'warnings'):                
+        with settings(host_string=h), hide('output', 'running', 'warnings'):
             for n in range(0,numNodes):
                 solrPort = '89' + str(84+n)
                 _status('Stopping Solr node on '+h+':'+solrPort+' using command: bin/solr stop -p '+solrPort)
                 run(binSolrScript + ' stop -p '+solrPort)
-            
+
 
 def ssh_to(cluster,n=0):
     """
@@ -1841,7 +1841,7 @@ def mine(user=None):
         inst = instances[key]
         if inst.state != 'running':
             continue
-        
+
         usertag = inst.__dict__['tags']['username']
         if usertag is None:
             usertag = '?user?'
@@ -1852,9 +1852,9 @@ def mine(user=None):
 
         if byUser.has_key(usertag) is False:
             byUser[usertag] = {}
-        
-        clusters = byUser[usertag]          
-        
+
+        clusters = byUser[usertag]
+
         cluster = inst.__dict__['tags']['cluster']
         if cluster is None:
             cluster = '?CLUSTER?'
@@ -1883,10 +1883,10 @@ def mine(user=None):
                     clusterList.append(clusterId)
 
     for u in byUser.keys():
-        clusters = byUser[u]    
+        clusters = byUser[u]
         for c in clusters.keys():
             clusters[c].sort() # sort so that the ssh_to indexes line up
-        print('\n*** user: '+u+' ***')    
+        print('\n*** user: '+u+' ***')
         print(json.dumps(byUser[u], indent=2))
 
     # make sure the local config knows about all my clusters
@@ -1954,7 +1954,7 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
             _info(h)
     print('\n')
     setup_demo(demoCluster)
-    
+
 def setup_demo(cluster):
     """
     Setup the SolrCloud demo on an already provisioned cluster, i.e. the instances you want to run the demo on have already been provisioned.
@@ -2004,11 +2004,11 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
             filesToPatch.append(jarFile)
         else:
             _fatal('JAR %s not found on LOCAL FS!' % jarFile)
-    
+
     # get list of hosts and verify SSH connectivity
     cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
-    
+
     # ability to patch a single server only
     if n is not None:
         hosts = [hosts[int(n)]]
@@ -2022,7 +2022,7 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
     activePorts = []
     for n in range(0,numNodes):
         activePorts.append(str(84 + n))
-    solrHostsAndPortsToRestart = {}            
+    solrHostsAndPortsToRestart = {}
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         host = hosts[0]
         solrHostsAndPortsToRestart[host] = set([]) # set is important
@@ -2032,15 +2032,15 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
         put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
         run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
         for jarFile in filesToPatch:
-            lastSlashAt = jarFile.rfind('/')    
+            lastSlashAt = jarFile.rfind('/')
             remoteJarFile = '%s/%s' % (remoteJarDir, jarFile[lastSlashAt+1:])
-            _status('Uploading to %s on %s ... please be patient (the other hosts will go faster)' % (remoteJarFile, host))            
-            put(jarFile, remoteJarDir)        
+            _status('Uploading to %s on %s ... please be patient (the other hosts will go faster)' % (remoteJarFile, host))
+            put(jarFile, remoteJarDir)
             run('cp %s %s/dist' % (remoteJarFile, remoteSolrDir))
             for port in activePorts:
                 solrHostsAndPortsToRestart[host].add(port)
                 run('cp %s %s/cloud%s/solr-webapp/webapp/WEB-INF/lib' % (remoteJarFile, remoteSolrDir, port))
-                    
+
             # scp from the first host to the rest
             if len(hosts) > 1:
                 for h in range(1,len(hosts)):
@@ -2051,16 +2051,16 @@ def patch_jars(cluster, localSolrDir, n=None, jars='core solrj', vers='4.7.1'):
                         run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s/cloud%s/solr-webapp/webapp/WEB-INF/lib' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteJarFile, ssh_user, host, remoteSolrDir, port))
                         solrHostsAndPortsToRestart[host].add(port)
     _info('JARs uploaded and patched successfully.')
-    
+
     _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart, 0)
-        
+
 
 def deploy_config(cluster,localConfigDir,configName):
     """
     Upload and deploy a local configuration directory to ZooKeeper; after creating the
     config in ZK, you can create collections that reference this config using conf=configName
     """
-    
+
     if os.path.isdir(localConfigDir) is False:
         _fatal('Local config directory %s not found!' % localConfigDir)
 
@@ -2068,7 +2068,7 @@ def deploy_config(cluster,localConfigDir,configName):
         # see if there is a conf subdirectory
         if os.path.isdir(localConfigDir+'/conf'):
             localConfigDir = localConfigDir+'/conf'
-        
+
     hosts = _lookup_hosts(cluster, False)
     sstkScript = _env(cluster, 'SSTK')
     remoteCloudDir = _env(cluster, 'sstk_cloud_dir')
@@ -2084,28 +2084,28 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
     """
     Backup an existing collection to S3 using the replication handler's snapshot support.
     Take a snapshot of each shard leader's index, tar up the files, and ship to S3.
-    
+
     Result is a directory under the s3://solr-scale-tk/ bucket containing a tar file per shard
-    e.g. for a collection named 'cloud1' with 4 shards running in a cluster named 'foo', 
+    e.g. for a collection named 'cloud1' with 4 shards running in a cluster named 'foo',
     you will have:
-    
+
     s3://bucket/foo_cloud1/
       -> shard1/snapshot
       -> shard2/snapshot
       -> shard3/snapshot
       -> shard4/snapshot
-    
+
     """
     # Verify the S3 bucket is usable
     pfx = cluster+'_'+collection+'/'
     if ebs is None:
         _status('Setting up S3 bucket: %s/%s' % (bucket,pfx))
         s3conn = boto.connect_s3()
-        rootBucket = s3conn.get_bucket(bucket)    
+        rootBucket = s3conn.get_bucket(bucket)
         for key in rootBucket.list():
             if key.name.startswith(pfx):
                 key.delete()
-    
+
     dryRun = str(dry_run) == '1'
     if dryRun:
         _warn('Doing a dry-run only.')
@@ -2119,7 +2119,7 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
 
     for host in hosts:
         with settings(host_string=host), hide('output', 'running', 'warnings'):
-            for n in range(0,numNodes):                
+            for n in range(0,numNodes):
                 solrPort = str(84+n)
                 backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
                 cmd = 'rm -rf %s; mkdir -p %s' % (backupDir, backupDir)
@@ -2127,23 +2127,23 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
                     run(cmd)
                 else:
                     _info('run( '+cmd+' )')
-            
+
     # start the backup
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
-    cmd = './tools.sh backup -backupDir %s -collection %s -zkHost %s' % (backupDirOnRemoteHost, collection, zkHost)    
+    cmd = './tools.sh backup -backupDir %s -collection %s -zkHost %s' % (backupDirOnRemoteHost, collection, zkHost)
     if dryRun is False:
         local(cmd)
         pass
     else:
         _info('local( '+cmd+' )')
-    
+
     if ebs is None:
         # S3 approach
         _status('Preparing to backup to S3 ...')
         for h in range(0,len(hosts)):
             host = hosts[h]
-            with settings(host_string=host), hide('output', 'running', 'warnings'):  
-                for n in range(0,numNodes):                
+            with settings(host_string=host), hide('output', 'running', 'warnings'):
+                for n in range(0,numNodes):
                     solrPort = str(84+n)
                     backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
                     tars2s3 = '#!/bin/bash\n'
@@ -2154,9 +2154,9 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
                     if dryRun is False:
                         if ebs is not None:
                             put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-                            run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))                        
+                            run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
                         run('nohup sh '+backupDir+'/s3put.sh > '+backupDir+'/s3put.out 2>&1 &', pty=False)
-                    else:                    
+                    else:
                         _info('run( '+tars2s3+' )')
     else:
         # EBS doesn't like a bunch of scp's running concurrently?
@@ -2166,30 +2166,30 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
             host = hosts[h]
             with settings(host_string=host), hide('output', 'running', 'warnings'):
                 put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-                run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))                        
+                run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
 
                 if h == 0 and ebs is not None:
                     sudo('mkdir -p '+ebs+'/'+pfx+' && chown -R '+ssh_user+': '+ebs+'/'+pfx)
-                    
+
                 scpToEbsSh = '#!/bin/bash\n'
-                
-                for n in range(0,numNodes):                
+
+                for n in range(0,numNodes):
                     solrPort = str(84+n)
                     backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
                     scpToEbsSh += 'cd '+backupDir+';'
                     scpToEbsSh += 'find . -name "shard*" -type d -exec scp -o StrictHostKeyChecking=no -r -i %s {} ec2-user@%s:%s/%s \;\n' % (_env(cluster,'ssh_keyfile_path_on_local'), hosts[0], ebs, pfx)
-                    
+
                 backupScript = backupDir+'/'+scriptName+'.sh'
-                run('rm -f '+backupScript)                
+                run('rm -f '+backupScript)
                 _fab_append(backupScript, scpToEbsSh)
                 _status('Running backup script on '+host+' ... be patient, this can take a while depending on your index size ...')
                 if dryRun is False:
                     run('sh '+backupDir+'/'+scriptName+'.sh')
                     _info('Backup script finished on '+host)
-                else:                    
+                else:
                     _info('run( '+scpToEbsSh+' )')
-        
-        
+
+
     done = 0
     while done < len(hosts):
         done = 0 # reset the counter since we check all nodes each loop
@@ -2205,11 +2205,11 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
                 else:
                     _status('upload to S3 still running on '+host+', pid(s): '+pid)
     _info('upload to S3 seems to be done on '+str(len(hosts))+' hosts')
-    
+
     # clean-up backup files to free disk
     for host in hosts:
         with settings(host_string=host):
-            for n in range(0,numNodes):                
+            for n in range(0,numNodes):
                 solrPort = str(84+n)
                 backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
                 cmd = 'rm -rf %s' % backupDir
@@ -2217,8 +2217,8 @@ def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
                     run(cmd)
                 else:
                     _info('run( '+cmd+' )')
-    
-    
+
+
 
 def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',alreadyDownloaded=0,ebsVol=None,ebsMount='/ebs0'):
     """
@@ -2226,13 +2226,13 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
     """
     cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
-    
+
     needsDownload = True if int(alreadyDownloaded) == 0 else False
-    
+
     ebsHost = None
     backupOnEbs = None
     useEbsVol = False
-    
+
     # EBS volume may be mounted on this host already
     if ebsVol is None and ebsMount is not None:
         # check if ebsMount exists
@@ -2243,7 +2243,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                 useEbsVol = True
                 needsDownload = False
                 _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
-    
+
     # may need to mount the EBS volume
     if ebsVol is not None and useEbsVol is False:
         # find the instance ID of the first host
@@ -2252,10 +2252,10 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
             for inst in rsrv.instances:
                 if inst.public_dns_name == hosts[0]:
                     instId = inst.id
-        
+
         if instId is None:
             _fatal('Could not determine the instance ID for '+hosts[0])
-        
+
         with settings(host_string=hosts[0]):
             cloud.attach_volume(ebsVol, instId, '/dev/sdf')
             time.sleep(10)
@@ -2263,7 +2263,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
             sudo('mkdir -p ' + ebsMount)
             sudo('mount /dev/xvdf ' + ebsMount)
             sudo('chown -R %s: %s' % (ssh_user,ebsMount))
-            run('df -h')            
+            run('df -h')
             backupOnEbs = ebsMount+'/'+backup_name
             if _fab_exists(backupOnEbs):
                 ebsHost = hosts[0]
@@ -2272,8 +2272,8 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                 _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
             else:
                 _fatal('EBS backup '+backupOnEbs+' not found on '+hosts[0])
-    
-    
+
+
     # download from s3 to one of the nodes
     # use the meta file to determine shard locations
     backup = None
@@ -2290,12 +2290,12 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                 break
         if foundIt is False:
             _fatal(backup+' not found in S3!')
-            
+
     # keeps track of which hosts have shard data we're restoring
     hostShardMap = {}
 
     remoteSolrDir = _env(cluster, 'solr_tip')
-        
+
     # collect the replica information for each shard for the collection we're restoring data into
     shardDirs = {}
 
@@ -2303,23 +2303,23 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
 
     with shell_env(JAVA_HOME=java_home), settings(host_string=hosts[0]), hide('output','running'):
         run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % remoteSolrDir)
-        get('/tmp/clusterstate.json', './clusterstate.json')    
+        get('/tmp/clusterstate.json', './clusterstate.json')
         # parse the clusterstate.json to get the shard leader node assignments
         _status('Fetching /clusterstate.json to get shard leader node assignments for '+collection)
-        clusterStateFile = open('./clusterstate.json')    
+        clusterStateFile = open('./clusterstate.json')
         clusterState = json.load(clusterStateFile)
-        clusterStateFile.close()                       
+        clusterStateFile.close()
         if clusterState.has_key(collection) is False:
             # assume an external collection
             _warn('Collection '+collection+' not found in /clusterstate.json, looking for external state ...')
             run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /collections/%s/state /tmp/state.json' % (remoteSolrDir, collection))
             get('/tmp/state.json', './state.json')
             clusterStateFile = open('./state.json')
-            clusterState = json.load(clusterStateFile)   
-            clusterStateFile.close()    
+            clusterState = json.load(clusterStateFile)
+            clusterStateFile.close()
             if clusterState.has_key(collection) is False:
                 _fatal('Cannot find state information for '+collection+' in ZooKeeper!')
-             
+
     collState = clusterState[collection]
     shards = collState['shards']
     for shard in shards.keys():
@@ -2329,20 +2329,20 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
             node_name = replicas[replica]['node_name']
             if node_name.endswith('_solr'):
                 node_name = node_name[0:len(node_name)-5]
-            hostAndPort = node_name.split(':') 
+            hostAndPort = node_name.split(':')
             info = {}
-            info['leader'] = replicas[replica].has_key('leader')               
+            info['leader'] = replicas[replica].has_key('leader')
             info['host'] = hostAndPort[0]
             info['port'] = hostAndPort[1][2:]
             info['core'] = replicas[replica]['core']
             shardDirs[shard].append(info)
-            
+
     _status('Found shard replica host assignments:')
     print(json.dumps(shardDirs, indent=2))
 
     # clean-up restore dir on all hosts to prepare for download
     if ebsHost is None:
-        for host in hosts:    
+        for host in hosts:
             with settings(host_string=host): #, hide('output'):
                 if needsDownload:
                     sudo('rm -rf /vol0/restore/%s' % backup_name) # delete if we're downloading new
@@ -2362,11 +2362,11 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                     with settings(host_string=host): #, hide('output'):
                         s3sync = ('s3cmd --progress sync s3://%s/%s /vol0/restore/%s/' % (backup, shard, backup_name))
                         run('nohup '+s3sync+' > /vol0/restore/'+backup_name+'/s3sync-'+shard+'.log 2>&1 &', pty=False)
-                        
+
         # poll each host that is downloading until the downloads are complete
         done = 0
         numDownloading = len(hostShardMap.keys())
-        _status('Waiting on %d hosts to download %d shard index files' % (numDownloading, len(shardDirs.keys())))            
+        _status('Waiting on %d hosts to download %d shard index files' % (numDownloading, len(shardDirs.keys())))
         while done < numDownloading:
             done = 0 # reset the counter since we check all nodes each loop
             _status('Sleeping for 30 seconds before checking status of S3 downloads on %d hosts' % numDownloading)
@@ -2396,79 +2396,79 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
                 if hostShardMap.has_key(ebsHost) is False:
                     hostShardMap[ebsHost] = []
                 hostShardMap[ebsHost].append(shard)
-                
+
 
         _info('hostShardMap: ')
         print(json.dumps(hostShardMap, indent=2))
-    
+
     # TODO: try to run the following commands on all nodes at once vs. synchronously
-       
+
     # restore the index data for all replicas across the cluster
     # one might think you only need to do for the leader, but then the replica
-    # would need to snap-pull from the leader anyway, so better to do all work now               
+    # would need to snap-pull from the leader anyway, so better to do all work now
     for host in hostShardMap.keys():
         with settings(host_string=host), hide('output'):
             # we'll be ssh'ing and scp'ing from the first host to the others
             # to move files around for the restore process
             put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
             run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
-                        
-            for shard in hostShardMap[host]:                
+
+            for shard in hostShardMap[host]:
                 _status('Restoring '+shard+' from host '+host)
-                                
+
                 # untar all the downloaded shardN.tar files on this host
-                #if needsDownload:            
+                #if needsDownload:
                 #run('cd /vol0/restore/%s; cat %s-tgz-* | tar xz; rm -f %s-tgz-*' % (backup_name, shard, shard))
                 restoreFromDir = '/vol0/restore/'+backup_name if backupOnEbs is None else backupOnEbs
-                            
+
                 replicas = shardDirs[shard]
-                for r in replicas:                
+                for r in replicas:
                     shardHost = r['host']
                     coreDir = ('%s/cloud%s/solr/%s' % (remoteSolrDir, r['port'], r['core']))
                     # do all the other hosts first so that we can move vs. copy on the localhost
                     if shardHost != host:
                         # scp
-                        sshCmd = ('ssh -o StrictHostKeyChecking=no -i %s %s@%s "mv %s/data/index %s/data/index-old; rm -rf %s/data/tlog/*"' % 
+                        sshCmd = ('ssh -o StrictHostKeyChecking=no -i %s %s@%s "mv %s/data/index %s/data/index-old; rm -rf %s/data/tlog/*"' %
                                   (_env(cluster,'ssh_keyfile_path_on_local'), ssh_user, shardHost, coreDir, coreDir, coreDir))
                         run(sshCmd)
                         _status('scp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        
-                        scpCmd = ('scp -o StrictHostKeyChecking=no -r -i %s %s/%s/* %s@%s:%s/data/index' % 
+
+                        scpCmd = ('scp -o StrictHostKeyChecking=no -r -i %s %s/%s/* %s@%s:%s/data/index' %
                                   (_env(cluster,'ssh_keyfile_path_on_local'), restoreFromDir, shard, ssh_user, shardHost, coreDir))
                         run(scpCmd)
-    
+
                 for r in replicas:
                     shardHost = r['host']
                     coreDir = ('%s/cloud%s/solr/%s' % (remoteSolrDir, r['port'], r['core']))
                     if shardHost == host:
                         # local copy to replica
                         _status('cp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        moveCmd = ('mv %s/data/index %s/data/index-old; cp -r %s/%s/* %s/data/index; rm -rf %s/data/tlog/*' % 
+                        moveCmd = ('mv %s/data/index %s/data/index-old; cp -r %s/%s/* %s/data/index; rm -rf %s/data/tlog/*' %
                                    (coreDir, coreDir, restoreFromDir, shard, coreDir, coreDir))
-                        run(moveCmd)                        
-                
-    _status('Restore index data complete ... reloading collection: '+collection)          
+                        run(moveCmd)
+
+    _status('Restore index data complete ... reloading collection: '+collection)
     urllib2.urlopen('http://%s:8984/solr/admin/collections?action=RELOAD&name=%s' % (hosts[0], collection))
-    time.sleep(10)        
+    time.sleep(10)
     solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
-    results = solr.search('*:*')                
+    results = solr.search('*:*')
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
-    
+
 def put_file(cluster,local,remotePath=None,num=1):
     """
     Upload a local file to one or more hosts in the specified cluster.
     Basically, a helper function on top of scp
-    """    
-    localFile = os.path.expanduser(local)    
+    """
+    localFile = os.path.expanduser(local)
     if os.path.isfile(localFile) is False:
         _fatal('File %s not found on local workstation!' % localFile)
-            
+
     hosts = _lookup_hosts(cluster, False)
     scp_hosts = [hosts[0]] if int(num) <= 0 else hosts[0:int(num)]
     homeDir = _env(cluster,'user_home')
     remoteDir = homeDir if remotePath is None else remotePath
-    for host in scp_hosts:    
+    for host in scp_hosts:
         with settings(host_string=host):
             put(local, remoteDir+'/')
 
@@ -2476,14 +2476,14 @@ def get_file(cluster,remote,n=0,local='./'):
     """
     Get a file from one of the remote hosts in your cluster.
     """
-    localDir = os.path.expanduser(local)    
+    localDir = os.path.expanduser(local)
     if os.path.isdir(localDir) is False:
-        _fatal('Directory %s not found on local workstation!' % localDir)            
+        _fatal('Directory %s not found on local workstation!' % localDir)
     idx = int(n)
     hosts = _lookup_hosts(cluster, False)
     with settings(host_string=hosts[idx]):
         get(remote,str(localDir))
-    
+
 def index_docs(cluster,collection,numDocs=20000,batchSize=100,indexOffset=0):
     """
     Index synthetic documents into a collection; mostly only useful for demos.
@@ -2494,7 +2494,7 @@ def index_docs(cluster,collection,numDocs=20000,batchSize=100,indexOffset=0):
 def restart_solr(cluster,wait=0,pauseBeforeRestart=0):
     """
     Initiates a rolling restart of a Solr cluster.
-    
+
     Pass wait=N (N > 0) to set a max wait for nodes to come back online;
     default behavior is to poll the node status until it is up with a max
     wait of 180 seconds.
@@ -2516,14 +2516,14 @@ def bunch_of_collections(cluster,prefix,num=2,shards=4,rf=3,conf='cloud',numDocs
         name = prefix + str(n)
         new_collection(cluster,name=name, rf=int(rf), shards=int(shards), conf=conf)
         #local('./tools.sh indexer -collection=%s -zkHost=%s -numDocsToIndex=%d' % (name, zkHost, numDocs))
-        
+
 def jconsole(cluster):
     """
     Launch and attach JConsole to the JVM bound to port 8984 on the first host in the cluster.
     """
     hosts = _lookup_hosts(cluster, False)
     local('jconsole %s:1084' % hosts[0])
-    
+
 def grep_logs(cluster,match,n=None,port=None):
     """
     Quick way to grep for a value across all Solr logs in a cluster.
@@ -2532,29 +2532,29 @@ def grep_logs(cluster,match,n=None,port=None):
     # all hosts or just one specified as an arg
     if n is not None:
         hosts = [hosts[int(n)]]
-        
+
     # all ports or just one specified as as arg
     ports = []
     if port is not None:
         ports.append(int(port))
     else:
         for p in range(0,_num_solr_nodes_per_host(cluster)):
-            ports.append(84 + int(p))        
+            ports.append(84 + int(p))
 
     remoteSolrDir = _env(cluster, 'solr_tip')
-    for host in hosts:    
+    for host in hosts:
         with settings(host_string=host):
             for p in ports:
                 logFile = '%s/cloud%d/logs/solr.log' % (remoteSolrDir, p)
                 run("grep $'%s' %s || true" % (match, logFile))
-                
+
 def proc(cluster,proc,kill=False):
     """
     Find and optionally kill a process running on all hosts on the cluster.
     """
     killEm = bool(kill)
     hosts = _lookup_hosts(cluster)
-    for host in hosts:    
+    for host in hosts:
         with settings(host_string=host), hide('running'):
             procCmd = '(for ID in `ps waux | grep '+proc+' | grep -v grep | awk \'{print $2}\' | sort -r`\n'
             if killEm:
@@ -2580,7 +2580,7 @@ def setup_instance_stores(cluster,numInstanceStores=1):
         _fatal('Failed to verify SSH connectivity to all hosts!')
     xdevs = ['xvdb','xvdc','xvdd','xvde']
     _setup_instance_stores(hosts, int(numInstanceStores), _env(cluster, 'AWS_HVM_AMI_ID'), xdevs)
-    cloud.close()    
+    cloud.close()
 
 def reload_collection(cluster,collection):
     """
@@ -2589,9 +2589,9 @@ def reload_collection(cluster,collection):
     cloud = _provider_api(cluster)
     hosts = _cluster_hosts(cloud, cluster)
     urllib2.urlopen('http://%s:8984/solr/admin/collections?action=RELOAD&name=%s' % (hosts[0], collection))
-    time.sleep(10)        
+    time.sleep(10)
     solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
-    results = solr.search('*:*')                
+    results = solr.search('*:*')
     _info('Restore '+collection+' complete. Docs: '+str(results.hits))
     healthcheck(cluster,collection)
 
@@ -2599,15 +2599,15 @@ def restart_node(cluster,port,n=0):
     """
     Restart a specific Solr node by specifying the cluster, port and node index.
     """
-    hosts = _lookup_hosts(cluster)    
+    hosts = _lookup_hosts(cluster)
     hostIdx = int(n)
     if hostIdx < 0 or hostIdx >= len(hosts):
-        _fatal('Invalid value '+n+' for host index!')        
+        _fatal('Invalid value '+n+' for host index!')
     host = hosts[int(n)]
-    
+
     if len(port) == 4:
         port = port[2:]
-    
+
     with settings(host_string=host):
         _status('Restarting Solr on '+host+':89'+port)
         _restart_solr(cluster, host, port, 10)
@@ -3483,52 +3483,61 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         yjpFusion: Enable remote profiling on the Fusion API services
     """
 
-    yjp_path_solr = None
-    yjp_path_fusion = None
-    if yjpPath is not None:
-        if bool(yjpSolr) is True:
-            yjp_path_solr = yjpPath
-        if bool(yjpFusion) is True:
-            yjp_path_fusion= yjpPath
+    print "Starting hacked up solr test..."
 
-    solrJavaMemOpts = None
-    apiJavaMem = None
-    if instance_type == 'r3.xlarge':
-        solrJavaMemOpts = '-Xms6g -Xmx6g'
-        apiJavaMem = '3g'
-    elif instance_type == 'r3.2xlarge':
-        solrJavaMemOpts = '-Xms8g -Xmx8g'
-        apiJavaMem = '4g'
+    # yjp_path_solr = None
+    # yjp_path_fusion = None
+    # if yjpPath is not None:
+    #     if bool(yjpSolr) is True:
+    #         yjp_path_solr = yjpPath
+    #     if bool(yjpFusion) is True:
+    #         yjp_path_fusion= yjpPath
+    #
+    # solrJavaMemOpts = None
+    # apiJavaMem = None
+    # if instance_type == 'r3.xlarge':
+    #     solrJavaMemOpts = '-Xms6g -Xmx6g'
+    #     apiJavaMem = '3g'
+    # elif instance_type == 'r3.2xlarge':
+    #     solrJavaMemOpts = '-Xms8g -Xmx8g'
+    #     apiJavaMem = '4g'
+    #
+    # hvmAmiId = _env(cluster, 'AWS_HVM_AMI_ID')
+    # _info('Starting Fusion cluster using HVM-based AMI: '+hvmAmiId)
+    #
+    # new_solrcloud(cluster,
+    #               n=n,
+    #               zkn=min(3,n),
+    #               ami=hvmAmiId,
+    #               instance_type=instance_type,
+    #               placement_group=placement_group,
+    #               yjp_path=yjp_path_solr,
+    #               auto_confirm=True,
+    #               solrJavaMemOpts=solrJavaMemOpts,
+    #               purpose='Fusion Performance Testing',customTags='{"CostCenter":"eng"}')
+    # _status('SolrCloud cluster provisioned ... deploying the perf config directory to ZK as name: perf')
+    # deploy_config(cluster,'perf','perf')
+    # deploy_config(cluster,'perf','perf_js')
+    # _status('Starting Fusion services across cluster ...')
+    # fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
+    #hosts = _lookup_hosts(cluster)
 
-    hvmAmiId = _env(cluster, 'AWS_HVM_AMI_ID')
-    _info('Starting Fusion cluster using HVM-based AMI: '+hvmAmiId)
-
-    new_solrcloud(cluster,
-                  n=n,
-                  zkn=min(3,n),
-                  ami=hvmAmiId,
-                  instance_type=instance_type,
-                  placement_group=placement_group,
-                  yjp_path=yjp_path_solr,
-                  auto_confirm=True,
-                  solrJavaMemOpts=solrJavaMemOpts,
-                  purpose='Fusion Performance Testing',customTags='{"CostCenter":"eng"}')
-    _status('SolrCloud cluster provisioned ... deploying the perf config directory to ZK as name: perf')
-    deploy_config(cluster,'perf','perf')
-    deploy_config(cluster,'perf','perf_js')
-    _status('Starting Fusion services across cluster ...')
-    fusion_start(cluster,api=n,connectors=1,ui=n,yjp_path=yjp_path_fusion,apiJavaMem=apiJavaMem)
-    hosts = _lookup_hosts(cluster)
+    # hardcoding the hostname of where solr can be reached
+    hosts = ["ui-staging.k8s.lucidworks.io"]
+    host_port = "80" # "8764"
 
     # make sure the proxy / UI service is up before making changes with the API
-    _wait_to_see_fusion_proxy_up(cluster, hosts[0], 60)
-    _status('Fusion proxy / UI service is up, commencing with post-startup configuration steps ...')
+    #_wait_to_see_fusion_proxy_up(cluster, hosts[0], 60)
+    #_status('Fusion proxy / UI service is up, commencing with post-startup configuration steps ...')
 
     # set the initial password for the new Fusion cluster
     fusionPasswd = '{"password":"password123"}'
-    postToApiUrl = "http://%s:8764/api" % hosts[0]
+    postToApiUrl = "http://%s:%s/api" % (hosts[0], host_port)
     req = urllib2.Request(postToApiUrl)
     req.add_header('Content-Type', 'application/json')
+
+    print "Connecting to: "+str(postToApiUrl)
+
     try:
         urllib2.urlopen(req, fusionPasswd)
     except urllib2.HTTPError as e:
@@ -3543,6 +3552,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     _status('Created new collection: '+collection)
     fusion_new_collection(cluster,name=collection+'_js',rf=repFact,shards=numShards,conf='perf_js')
     _status('Created new collection: '+collection+'_js')
+
+
+    print "xxxx"
 
     perfPipelineDef = """{
   "id" : "perf",
@@ -3578,6 +3590,9 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
   } ]
 }"""
     _fusion_api(hosts[0], 'index-pipelines', 'POST', perfJsPipelineDef)
+
+
+    print "aaaaa"
 
     # raise the buffer size for high-volume indexing into Solr
     bufferSize = 3000
@@ -3861,7 +3876,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
             _info('Fusion API is running on '+hosts[h])
 
     _info('JARs uploaded and patched successfully.')
-    
+
 def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
     ec2 = _provider_api()
     username = getpass.getuser()
@@ -3906,7 +3921,7 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
             idx += 1
 
     ec2.close()
-        
+
 
 def setup_jmeter(cluster,jmeterVers='3.0'):
     hosts = _lookup_hosts(cluster)
