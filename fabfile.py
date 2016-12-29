@@ -2898,9 +2898,9 @@ GC_TUNE=(-XX:NewRatio=3 \
 
     agentPropsTemplate = """
 # Some defaults across all processes
-zk.connect=%s
+#zk.connect=%s
 default.zk.connect=%s
-solr.zk.connect=%s
+#solr.zk.connect=%s
 default.solrZk.connect=%s
 
 # garbage collection options can be "cms", "g1", "throughput" or "parallel", "serial" or "none"
