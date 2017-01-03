@@ -396,9 +396,9 @@ public class IndexingSampler extends AbstractJavaSamplerClient implements Serial
 
     Map<String,Object> doc = new LinkedHashMap<>();
 
-    if (isCsv) {
+    //if (isCsv) {
       doc.put("id", docId);
-    }
+    //}
 
     for (FieldSpec f : fields) {
       if (f.name.endsWith("_ss")) {

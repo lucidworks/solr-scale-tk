@@ -67,7 +67,9 @@ _config['fusion_vers'] = '2.4.2'
 instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
                         'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
                         'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
-                        'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2 }
+                        'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2,
+                        'r4.large':0, 'r4.xlarge':0, 'r4.2xlarge':0, 'r4.4xlarge':0, 'r4.8xlarge':0,
+                        'm4.large':0, 'm4.xlarge':0, 'm4.2xlarge':0, 'm4.4xlarge':0, 'm4.8xlarge':0 }
 
 class _HeadRequest(urllib2.Request):
     def get_method(self):
@@ -721,9 +723,9 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '512m'
-    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large' or instance_type == 'c3.2xlarge':
+    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large' or instance_type == 'c3.2xlarge' or instance_type == 'r4.large':
         if numNodesPerHost == 1:
-            mx = '7g'
+            mx = '6g'
         elif numNodesPerHost == 2:
             mx = '3g'
         elif numNodesPerHost == 3:
@@ -735,9 +737,9 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '640m'
-    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge':
+    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r4.xlarge' or instance_type == 'r3.2xlarge' or instance_type == 'r4.2xlarge':
         if numNodesPerHost == 1:
-            mx = '15g'
+            mx = '12g'
         elif numNodesPerHost == 2:
             mx = '8g'
         elif numNodesPerHost == 3:
@@ -749,8 +751,6 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '3g'
-    elif instance_type == 'r3.2xlarge':
-        mx = '16g'
     elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
@@ -1128,13 +1128,16 @@ def _wait_to_see_fusion_api_up(cluster, apiHost, maxWait):
         _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
 
     fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
-    path = 'system/status' if fusionVers.startswith('3.') else 'system/ping'
+    path = 'system/ping'
     while isRunning is False and waitTime < int(maxWait):
         isRunning = False
         try:
             statusResp = _fusion_api(apiHost, path)
             # if we get here, api is responding ...
-            isRunning = True
+            if statusResp == "pong":
+                isRunning = True
+            else:
+                _error('ping '+apiHost+' returned: '+statusResp)
         except:
             # make it JSON
             statusResp = '{ "error": "'+str(sys.exc_info()[0])+'" }'
@@ -1208,6 +1211,89 @@ def _defaultvpc_exists(region='us-east-1'):
     _status("Default VPC exists:" + str(ret))
     return ret
 
+def attach_ebs(cluster,n=None,size=50,device='sdy',volume_type=None,iops=None):
+    """
+    Attaches a new EBS volume to an instance in an existing cluster.
+    """
+    ec2 = _provider_api(cluster)
+    ebsSizeInGb = int(size)
+    hosts = _cluster_hosts(ec2, cluster)
+    if n is not None:
+        onlyOne = []
+        onlyOne.push(hosts[int(n)])
+        hosts = onlyOne
+
+    for instanceHost in hosts:
+
+        # copy the tags over from the instance to the ebs vol
+        tagsOnInstance = {}
+        instanceId = None
+        az = None
+        byTag = ec2.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
+        for rsrv in byTag:
+            for inst in rsrv.instances:
+                if (inst.public_dns_name == instanceHost):
+                    tagsOnInstance = inst.__dict__['tags']
+                    instanceId = inst.id
+                    az = inst.placement
+                    break
+
+        if instanceId is None or az is None:
+            _fatal("Can't find instance ID / availability zone for instance "+instanceHost+" in cluster: "+cluster)
+
+        vol = ec2.create_volume(ebsSizeInGb, az, volume_type=volume_type, iops=iops)
+        _info('Created new EBS volume '+vol.id+' in AZ '+az)
+        time.sleep(5)
+        volStatus = "unknown"
+        maxTime = 180
+        totalTime = 0
+        while volStatus != "available" and totalTime < maxTime:
+            curr_vol = ec2.get_all_volumes([vol.id])[0]
+            volStatus = curr_vol.status
+            _status('New EBS volume for '+instanceId+' in '+curr_vol.zone+' is '+volStatus)
+            if volStatus != "available":
+                time.sleep(10)
+                totalTime += 10
+        if volStatus != "available":
+            _fatal('Failed to see new EBS volume become available in %d seconds!' % maxTime)
+
+        time.sleep(2)
+        _status('New EBS volume created, tagging it ...')
+        tagsOnInstance['Name'] = tagsOnInstance['Name']+'_vol0'
+        tagsOnInstance.pop('numInstanceStores', None)
+        ec2.create_tags([vol.id], tagsOnInstance)
+
+        result = ec2.attach_volume (vol.id, instanceId, "/dev/"+device)
+        _status('Attach EBS vol %s to instance %s returned status: %s' % (vol.id, instanceId, result))
+        time.sleep(5)
+
+        attachStatus = "unknown"
+        deviceId = "?"
+        totalTime = 0
+        while attachStatus != "attached" and totalTime < maxTime:
+            curr_vol = ec2.get_all_volumes([vol.id])[0]
+            attachStatus = curr_vol.attach_data.status
+            deviceId = curr_vol.attach_data.device
+            _status('Attached EBS vol %s to instance %s has status: %s' % (vol.id, instanceId, attachStatus))
+            if attachStatus != "attached":
+                time.sleep(10)
+                totalTime += 10
+        if attachStatus != "attached":
+            _fatal('Failed to attach new EBS vol %s to instance %s within %d seconds!' % (vol.id, instanceId, maxTime))
+
+        _info('Successfully attached new EBS vol %s to instance %s at device %s ... mounting at /vol0' % (vol.id, instanceId, deviceId))
+        v = 0
+        xdevs = ['xv'+device[1:]]
+        with settings(host_string=instanceHost):
+            sudo('mkfs -F -t ext4 /dev/%s || true' % xdevs[v])
+            sudo('mkdir /vol%d' % v)
+            sudo('echo "/dev/%s /vol%d ext4 defaults 0 2" >> /etc/fstab' % (xdevs[v], v))
+            sudo('mount /vol%d' % v)
+            # grant ownership to our ssh user
+            sudo('chown -R %s: /vol%d' % (ssh_user, v))
+
+    ec2.close()
+
 # -----------------------------------------------------------------------------
 # Fabric actions begin here ... anything above this are private helper methods.
 # -----------------------------------------------------------------------------
@@ -1223,7 +1309,8 @@ def new_ec2_instances(cluster,
                       purpose=None,
                       vpcSubnetId=None,
                       vpcSecurityGroupId=None,
-                      customTags='{"CostCenter":"eng"}'):
+                      customTags='{"CostCenter":"eng"}',
+                      rootEbsVolSize=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1239,14 +1326,19 @@ def new_ec2_instances(cluster,
         the per hour instance price * n, so be careful.
       maxWait (int, optional): Maximum number of seconds to wait for the instances to be online;
         default is 180 seconds.
-      instance_type (optional): Amazon EC2 instance instance_type, default is m3.medium
+      instance_type (optional): Amazon EC2 instance instance_type, default is r3.large
+      ami (optional): AMI ID, defaults to using the config value for AWS_HVM_AMI_ID in ~/.sstk
+      key (optional): SSH key pair name, defaults to using the config value for AWS_KEY_NAME in ~/.sstk
+      az (optional): Availability zone, defaults to using the config value for AWS_AZ in ~/.sstk
       placement_group (optional): Launches one or more instances in an AWS placement group, which
-        gives better network performance between instances working in a cluster; you must create
-        the placement group from the AWS console before using this option.
+        gives better network performance between instances working in a cluster; if the placement group
+        doesn't exist, it will be created on-the-fly.
       skipStores (optional): Skips creation and mounting of filesystems; useful when you don't
         need access to the additional instance storage devices.
       purpose (optional): short description of why you're starting this cluster
-      
+      vpcSubnetId (optional): VPC sub-net ID, defaults to the config value for vpc_subnetid in ~/.sstk
+      rootEbsVolSize (optional): Used to re-size the root EBS volume for each instance, otherwise uses the
+        size configured when the AMI was built.
 
     Returns:
       hosts (list): A list of public DNS names for the instances launched by this command.
@@ -1318,8 +1410,8 @@ def new_ec2_instances(cluster,
         
     # warn the user that they are configuring instances without any additional instance storage configured
     # TODO: need to build up a dict containing instance type metadata
-    if numStores == 0:
-        if confirm(instance_type+' instances support multiple instance stores, are you sure you want to launch these instances without using these disks?') is False:
+    if numStores == 0 and numInstanceStores > 0:
+        if confirm(instance_type+' instances support instance stores, are you sure you want to launch these instances without using these disks?') is False:
             _fatal('numInstanceStores=0 setting not confirmed!')
 
     # TODO: this is hacktastic! Need a mapping from /dev/sd# to /dev/xvd#
@@ -1329,12 +1421,22 @@ def new_ec2_instances(cluster,
     bdm = None   
     if setupInstanceStores is True and numStores > 0:
         bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
+        if rootEbsVolSize is not None:
+            dev_xvda = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
+            dev_xvda.size = int(rootEbsVolSize)
+            bdm['/dev/xvda'] = dev_xvda        
         for s in range(0,numStores):
             ephName = 'ephemeral%d' % s
             devName = '/dev/%s' % devs[s]
             dev_sdb = boto.ec2.blockdevicemapping.BlockDeviceType(ephemeral_name=ephName)
             bdm[devName] = dev_sdb
             _info('Setup Instance store BlockDeviceMapping: %s -> %s' % (devName, ephName))
+    else:
+        if rootEbsVolSize is not None:
+            bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
+            dev_xvda = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
+            dev_xvda.size = int(rootEbsVolSize)
+            bdm['/dev/xvda'] = dev_xvda
 
     # launch the instances in EC2
 
@@ -1469,6 +1571,7 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solr
       cluster: Identifies the EC2 instances to deploy SolrCloud on.
       zk (optional): Identifies the ZooKeeper ensemble to connect SolrCloud to; if not
         provided, this SolrCloud will start ZooKeeper on the first host of the cluster.
+      zkn (optiona): Number of hosts to setup a ZK server on, e.g. to get a 3-node ensemble, specify zkn=3
       nodesPerHost (int, optional): Number of Solr nodes to start per host; each Solr will
         have a unique port number, starting with 8984.
       yjp_path: Path to the YourKit profiler if you want to enable remote profiling of Solr instances
@@ -1557,6 +1660,20 @@ export SOLR_JAVA_MEM="%s"
     numStores = instanceStoresByType[instance_type]
     if numStores is None:
         numStores = 1
+
+    if numStores == 0:
+        # need to check if they mounted ebs vols
+        with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
+            if _fab_exists('/vol3'):
+                numStores = 4
+            elif _fab_exists('/vol2'):
+                numStores = 3
+            elif _fab_exists('/vol1'):
+                numStores = 2
+            elif _fab_exists('/vol0'):
+                numStores = 1
+            if numStores > 0:
+                _status('Found %d mounted EBS volumes.' % numStores)
         
     solrHostAndPorts = []
     for host in hosts:
@@ -1733,7 +1850,7 @@ def kill(cluster):
     _save_config()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags='{"CostCenter":"eng"}'):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags='{"CostCenter":"eng"}',rootEbsVolSize=None):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
@@ -1769,7 +1886,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if autoConfirm is False and confirm('Verify the parameters. OK to proceed?') is False:
         return
 
-    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose, customTags=customTags)
+    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose, customTags=customTags, rootEbsVolSize=rootEbsVolSize)
     hosts = setup_solrcloud(cluster=cluster, zk=zk, zkn=zkn, nodesPerHost=nodesPerHost, yjp_path=yjp_path, solrJavaMemOpts=solrJavaMemOpts)
     solrUrl = 'http://%s:8984/solr/#/' % str(hosts[0])
     _info('Successfully launched new SolrCloud cluster ' + cluster + '; visit: ' + solrUrl)
@@ -2744,7 +2861,6 @@ def _fusion_api(host, apiEndpoint, method='GET', json=None):
             _error('Fusion API request to '+apiUrl+' failed due to: %s' % str(e) + '\n' + e.read())
         except urllib2.URLError as ue:
             _error('Fusion API request to '+apiUrl+' failed due to: %s' % str(ue))
-
     else:
         postToApiUrl = ("http://%s:8765/api/v1/%s" % (host, apiEndpoint))
         req = urllib2.Request(postToApiUrl)

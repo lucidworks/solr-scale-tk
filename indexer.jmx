@@ -15,9 +15,9 @@
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller" enabled="true">
           <boolProp name="LoopController.continue_forever">false</boolProp>
-          <stringProp name="LoopController.loops">1</stringProp>
+          <intProp name="LoopController.loops">-1</intProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.num_threads">4</stringProp>
         <stringProp name="ThreadGroup.ramp_time">1</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
@@ -36,17 +36,17 @@
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">perf</stringProp>
+                <stringProp name="Argument.value">perf2x2</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="BATCH_SIZE" elementType="Argument">
                 <stringProp name="Argument.name">BATCH_SIZE</stringProp>
-                <stringProp name="Argument.value">100</stringProp>
+                <stringProp name="Argument.value">10</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="NUM_DOCS_PER_LOOP" elementType="Argument">
                 <stringProp name="Argument.name">NUM_DOCS_PER_LOOP</stringProp>
-                <stringProp name="Argument.value">100</stringProp>
+                <stringProp name="Argument.value">1000000</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="THREAD_ID" elementType="Argument">
@@ -56,12 +56,12 @@
               </elementProp>
               <elementProp name="ID_PREFIX" elementType="Argument">
                 <stringProp name="Argument.name">ID_PREFIX</stringProp>
-                <stringProp name="Argument.value">id1</stringProp>
+                <stringProp name="Argument.value">tjp3</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
                 <stringProp name="Argument.name">RANDOM_SEED</stringProp>
-                <stringProp name="Argument.value">5150</stringProp>
+                <stringProp name="Argument.value">5152</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COMMIT_AT_END" elementType="Argument">
@@ -71,7 +71,7 @@
               </elementProp>
               <elementProp name="FUSION_INDEX_PIPELINE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_INDEX_PIPELINE</stringProp>
-                <stringProp name="Argument.value">http://ec2-52-23-243-57.compute-1.amazonaws.com:8765/api/v1/index-pipelines/perf/collections/perf/index</stringProp>
+                <stringProp name="Argument.value">http://ec2-107-21-35-31.compute-1.amazonaws.com:8765/api/v1/index-pipelines/perf2x2-default/collections/perf2x2/index,http://ec2-54-91-239-220.compute-1.amazonaws.com:8765/api/v1/index-pipelines/perf2x2-default/collections/perf2x2/index</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="ENDPOINT_TYPE" elementType="Argument">
@@ -81,7 +81,7 @@
               </elementProp>
               <elementProp name="FUSION_CONTENT_TYPE" elementType="Argument">
                 <stringProp name="Argument.name">FUSION_CONTENT_TYPE</stringProp>
-                <stringProp name="Argument.value">application/vnd.lucidworks-document</stringProp>
+                <stringProp name="Argument.value">application/json</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
             </collectionProp>

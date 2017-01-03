@@ -192,7 +192,7 @@ public class FusionPipelineClient {
       HttpClientUtil.setMaxConnectionsPerHost(httpClient, 1000);
       isKerberos = true;
     } else {
-      globalConfig = RequestConfig.custom().setCookieSpec(CookieSpecs.BEST_MATCH).build();
+      globalConfig = RequestConfig.custom().setCookieSpec(CookieSpecs.BEST_MATCH).setSocketTimeout(10000).build();
       cookieStore = new BasicCookieStore();
 
       // build the HttpClient to be used for all requests
