@@ -1239,7 +1239,7 @@ def attach_ebs(cluster,n=None,size=50,device='sdy',volume_type=None,iops=None):
         byTag = ec2.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
         for rsrv in byTag:
             for inst in rsrv.instances:
-                if (inst.public_dns_name == instanceHost):
+                if (inst.public_dns_name == instanceHost or inst.private_dns_name == instanceHost):
                     tagsOnInstance = inst.__dict__['tags']
                     instanceId = inst.id
                     az = inst.placement
@@ -1989,8 +1989,8 @@ def mine(user=None):
 
         if inst.launch_time:
             upTime = _uptime(inst.launch_time)
-            clusters[cluster].append('%s: %s / %s / %s (%s %s%s)' %
-              (inst.public_dns_name, key, inst.private_ip_address, nameTag, inst.instance_type, inst.state, upTime))
+            clusters[cluster].append('%s (private: %s): %s / %s / %s (%s %s%s)' %
+              (inst.public_dns_name, inst.private_dns_name, key, inst.private_ip_address, nameTag, inst.instance_type, inst.state, upTime))
 
         clusterList.append(cluster)
 
@@ -2376,7 +2376,7 @@ def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',already
         instId = None
         for rsrv in cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster}):
             for inst in rsrv.instances:
-                if inst.public_dns_name == hosts[0]:
+                if inst.public_dns_name == hosts[0] or inst.private_dns_name == hosts[0]:
                     instId = inst.id
         
         if instId is None:
