@@ -250,10 +250,15 @@ def _poll_for_running_status(rsrv, maxWait=180):
 def _find_instances_in_cluster(cloud, cluster, onlyIfRunning=True):
     tagged = {}
     byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
+    _info("find_instance by tag: {0} for cloud: {1} and cluster: {2}".format(byTag, cloud, cluster))
     for rsrv in byTag:
         for inst in rsrv.instances:
+            _info("Checking instance: {0}".format(inst))
             if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
-                tagged[inst.id] = inst.public_dns_name
+                if inst.public_dns_name:
+                    tagged[inst.id] = inst.public_dns_name
+                elif inst.private_dns_name: #we may be launching in a private subnet
+                    tagged[inst.id] = inst.private_dns_name
 
     return tagged
 
@@ -325,7 +330,7 @@ def _cluster_hosts(cloud, cluster):
     if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster):
         if sstkCfg['clusters'][cluster].has_key('hosts'):
             clusterHosts = sstkCfg['clusters'][cluster]['hosts']
-
+    _info("Cluster Hosts: {0}".format(clusterHosts))
     if clusterHosts is None:
         # not cached locally ... must hit provider API
         clusterHosts = []
