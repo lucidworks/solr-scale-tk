@@ -174,6 +174,7 @@ def _env(cluster, key, defaultValue=None):
     return _expand_config_var(cluster, val)
 
 def _get_ec2_provider(region):
+    _info("Region used: " + region)
     if region is not None:
         return boto.ec2.connect_to_region(region)
     else:
@@ -362,6 +363,7 @@ def _verify_ssh_connectivity(hosts, maxWait=120):
     while hasConn is False and waitTime < maxWait:
         hasConn = True  # assume true and prove false with SSH failure
         for host in hosts:
+            _info("Trying to connect to " + host)
             if (host in sshSet) is False:
                 if _ssh_to_new_instance(host):
                     sshSet.add(host)
@@ -1465,7 +1467,7 @@ def new_ec2_instances(cluster,
         if vpcSecurityGroupId is None:
             _fatal('Cannot determine security group ID for launching EC2 instances in a VPC! Please set the vpc_security_group_id property in your ~/.sstk file.')
 
-    _info('Launching '+str(num)+' EC2 instances in VPC subnet '+vpcSubnetId+' using the '+vpcSecurityGroupId+' security group in '+az)
+    _info('Launching '+str(num)+' EC2 instances in VPC subnet '+vpcSubnetId+' using the '+vpcSecurityGroupId+' security group in '+az + 'subnet: '+vpcSubnetId + ' key: ' + key)
     rsrv = ec2.run_instances(ami,
                          min_count=num,
                          max_count=num,
@@ -1532,6 +1534,7 @@ def new_ec2_instances(cluster,
     # Sets the env.hosts param to contain the hosts we just launched; helps when chaining Fabric commands
     hosts = _cluster_hosts(ec2, cluster)
     ec2.close()
+    _info("Hosts: {0}".format(hosts))
 
     # don't return from this operation until we can SSH into each node
     # and some hvm (esp the larger instance types) can take longer to provision
@@ -2042,7 +2045,8 @@ def kill_mine():
             for iid in instance_ids:
                 if my_instances[iid].tags.has_key('cluster'):
                     cluster = my_instances[iid].tags['cluster']
-                    sstk_cfg['clusters'].pop(cluster, None)
+                    if 'clusters' in sstk_cfg:
+                        sstk_cfg['clusters'].pop(cluster, None)
             _save_config()
 
             # verify aws now reports as terminated
