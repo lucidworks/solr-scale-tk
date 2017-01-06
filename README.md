@@ -12,11 +12,12 @@ Please visit the Google Groups forum - https://groups.google.com/forum/#!forum/s
 Setup
 ========
 
-Make sure you're running Python 2.7 and have installed Fabric and boto dependencies. 
+Make sure you're running Python 2.7 and have installed dateutil, Fabric and boto dependencies. 
 
 On the Mac, you can do:
 
 ```
+sudo easy_install python-dateutil
 sudo easy_install fabric
 sudo easy_install boto
 ```
