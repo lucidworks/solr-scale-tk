@@ -1649,6 +1649,7 @@ export SOLR_JAVA_MEM="%s"
 
     # bootstrap zk
     with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+        _info(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
         run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
 
     for host in hosts:
