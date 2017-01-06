@@ -695,7 +695,7 @@ def _get_instance_type(cloud, cluster):
 def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
     
     _status('Determining Solr Java memory options for running %s Solr nodes on a %s' % (numNodesPerHost, instance_type))
-    
+    #TODO: allow overrides via .sstk
     if instance_type is None or numNodesPerHost <= 0: # garbage in, just use default
         return '-Xms512m -Xmx512m'
 
@@ -744,7 +744,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '640m'
-    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r4.xlarge' or instance_type == 'r3.2xlarge' or instance_type == 'r4.2xlarge':
+    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r3.2xlarge':
         if numNodesPerHost == 1:
             mx = '12g'
         elif numNodesPerHost == 2:
@@ -758,7 +758,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '3g'
-    elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge':
+    elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge' or instance_type == 'r4.xlarge' or instance_type == 'r4.2xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
         else:
