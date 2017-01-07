@@ -3938,8 +3938,20 @@ def report_fusion_metrics(cluster,collection):
 def upload_solr_plugin_jars(cluster, jars):
     """
     Upload the given jars (which must be available locally to the Solr lib directory
+
+    Note: this does not restart Solr
     """
-    pass
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    jarList = jars.split()
+    if n is not None:
+        hosts = [hosts[int(n)]]
+    _verify_ssh_connectivity(hosts)
+    solrTip = _env(cluster, 'solr_tip')
+    # create a staging area on each remote host to load jars into
+    remoteJarDir = '%s/server/solr-webapp/webapp/WEB-INF/lib/' % solrTip
+    remoteJarFilesToCopy = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+    _info('JARs uploaded successfully: {0}.  You may need to restart Solr services in order to have the jars be available on the classpath.'.format(remoteJarFilesToCopy))
 
 
 
@@ -3957,38 +3969,40 @@ def upload_fusion_plugin_jars(cluster, jars, n=None):
         hosts = [hosts[int(n)]]
     _verify_ssh_connectivity(hosts)
     fusionHome = _env(cluster, 'fusion_home')
-    fusionBin = fusionHome+'/bin'
-    fusionLogs = fusionHome+'/var/log'
-
     # create a staging area on each remote host to load jars into
     remoteJarDir = '%s/apps/libs' % fusionHome
+    remoteJarFilesToCopy = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+    _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteJarFilesToCopy))
 
-    remoteJarFilesToCopy = set([])
+
+def upload_remote_files(cluster, hosts, fileList, remoteDir):
+    remoteFilesToCopy = set([])
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         host = hosts[0]
+        #Make sure we have the key as needed
         run('mkdir -p %s/.ssh' % user_home)
         local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
         local_key_name = ntpath.basename(local_key_path)
         put(local_key_path, '%s/.ssh' % user_home)
         run('chmod 600 {0}/.ssh/{1}'.format(user_home, local_key_name))
-        for jarFile in jarList:
-            lastSlashAt = jarFile.rfind('/')
-            jarFileName = jarFile[lastSlashAt+1:]
-            remoteJarFile = '%s/%s' % (remoteJarDir, jarFileName)
-            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (jarFile, remoteJarFile, host))
-            put(jarFile, remoteJarFile)
-            #run('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, jarFileName, remoteJarFile))
+        for theFile in fileList:
+            lastSlashAt = theFile.rfind('/')
+            fileName = theFile[lastSlashAt + 1:]
+            remoteFile = '%s/%s' % (remoteDir, fileName)
+            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (
+            theFile, remoteFile, host))
+            put(theFile, remoteFile)
+            # run('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, fileName, remoteFile))
 
-            remoteJarFilesToCopy.add(jarFileName)
+            remoteFilesToCopy.add(fileName)
 
             # scp from the first host to the rest
             if len(hosts) > 1:
-                for h in range(1,len(hosts)):
+                for h in range(1, len(hosts)):
                     host = hosts[h]
-                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (local_key_name, remoteJarFile, ssh_user, host, remoteJarDir))
-
-    _info('JARs uploaded successfully.  You may need to restart Fusion services in order to have the jars be available on the classpath.')
-
+                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (
+                        local_key_name, remoteFile, ssh_user, host, remoteDir))
+    return remoteFilesToCopy
 
 
 def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAPSHOT', remoteVers='2.1.0'):
