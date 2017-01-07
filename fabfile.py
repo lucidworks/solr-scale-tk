@@ -63,7 +63,7 @@ _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion'
 _config['fusion_vers'] = '2.4.2'
-_config['connector_memory_in_gb'] = 1
+_config['connector_memory_in_gb'] = '1'
 
 instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
                         'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
