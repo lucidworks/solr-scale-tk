@@ -429,7 +429,7 @@ def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, privat
             solrHost = '`curl -s http://169.254.169.254/latest/meta-data/public-hostname`'
         else:
             #we don't have a public name, get the local
-            solrHost = '`curl -s http://169.254.169.254/latest/meta-data/local-hostname`'
+            solrHost = '`curl -s http://169.254.169.254/latest/meta-data/local-ipv4`'
 
     solrInSh = ('''#!/bin/bash
 SOLR_JAVA_HOME="%s"
