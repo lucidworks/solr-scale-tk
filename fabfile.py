@@ -3932,6 +3932,75 @@ def report_fusion_metrics(cluster,collection):
 
     return totalCount
 
+
+def upload_solr_plugin_jars(cluster, jars):
+    """
+    Upload the given jars (which must be available locally to the Solr lib directory
+    """
+    pass
+
+def upload_fusion_plugin_jars(cluster, jars):
+    """
+    Upload the given plugin jars (which must be available locally to the Fusion lib directory
+    """
+    #TODO: consolidate this with solr plugin jars and fusion_patch_jars
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    jarList = jars.split()
+    if n is not None:
+        hosts = [hosts[int(n)]]
+    _verify_ssh_connectivity(hosts)
+    fusionHome = _env(cluster, 'fusion_home')
+    fusionBin = fusionHome+'/bin'
+    fusionLogs = fusionHome+'/var/log'
+
+    # create a staging area on each remote host to load jars into
+    remoteJarDir = '%s/apps/libs' % fusionHome
+    for h in hosts:
+        with settings(host_string=h), hide('output', 'running', 'warnings'):
+            run('rm -rf %s; mkdir -p %s' % (remoteJarDir,remoteJarDir))
+
+    remoteJarFilesToCopy = set([])
+    with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
+        host = hosts[0]
+        run('mkdir -p %s/.ssh' % user_home)
+        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
+        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        for jarFile in jarList:
+            lastSlashAt = jarFile.rfind('/')
+            jarFileName = jarFile[lastSlashAt+1:]
+            remoteJarFile = '%s/%s' % (remoteJarDir, jarFileName)
+            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (jarFile, remoteJarFile, host))
+            put(jarFile, remoteJarFile)
+            #run('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, jarFileName, remoteJarFile))
+
+            remoteJarFilesToCopy.add(jarFileName)
+
+            # scp from the first host to the rest
+            if len(hosts) > 1:
+                for h in range(1,len(hosts)):
+                    host = hosts[h]
+                    run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteJarFile, ssh_user, host, remoteJarDir))
+
+        _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
+        _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')
+
+    # copy the staged jars from tmp dir to all places in fusion on the rest of the hosts in the cluster
+    for h in range(1,len(hosts)):
+        _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
+        _status('Restarted API service on '+hosts[h]+' ... waiting up to 180 seconds to see it come back online.')
+
+    for h in range(0,len(hosts)):
+        apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[h], 180)
+        if apiIsRunning is False:
+            _fatal('Fusion API not responding on '+hosts[h]+'! Consult the Fusion API log for errors.')
+        else:
+            _info('Fusion API is running on '+hosts[h])
+
+    _info('JARs uploaded successfully.')
+
+
+
 def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAPSHOT', remoteVers='2.1.0'):
     """
     Replaces Fusion JAR files on remote servers with new ones built locally.
