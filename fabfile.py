@@ -535,8 +535,7 @@ def _is_private_subnet(cluster):
     result = False
 
     sstkCfg = _get_config()
-    if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster):
-        if sstkCfg['clusters'][cluster].has_key('is_private_subnet'):
+    if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster) and sstkCfg['clusters'][cluster].has_key('is_private_subnet'):
             result = sstkCfg['clusters'][cluster]['is_private_subnet']
     else:
         #no cached entry
