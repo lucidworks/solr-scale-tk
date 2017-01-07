@@ -547,7 +547,7 @@ def _is_private_subnet(cluster):
             for inst in rsrv.instances:
                 _info("Checking instance: {0}".format(inst))
                 if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
-                    result = inst.public_dns_name is not None
+                    result = inst.public_dns_name is None
 
 
     #cache the result:
