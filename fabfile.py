@@ -418,13 +418,18 @@ log4j.logger.org.apache.solr.update.processor.LogUpdateProcessor=WARN
 '''
     return cfg
 
-def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, yjp_path=None):
+def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, privateVPC, yjp_path=None):
 
     provider = _env(cluster, 'provider')
     if provider == "local":
         solrHost = "localhost"
     else:
-        solrHost = '`curl -s http://169.254.169.254/latest/meta-data/public-hostname`'
+        _info("Using Private VPC: {0} for cluster: {1}".format(privateVPC, cluster))
+        if privateVPC is False:
+            solrHost = '`curl -s http://169.254.169.254/latest/meta-data/public-hostname`'
+        else:
+            #we don't have a public name, get the local
+            solrHost = '`curl -s http://169.254.169.254/latest/meta-data/local-hostname`'
 
     solrInSh = ('''#!/bin/bash
 SOLR_JAVA_HOME="%s"
@@ -524,6 +529,37 @@ def _check_zk_health(n, hosts, maxWait=90):
         _info('ZooKeeper is healthy on %d hosts.' % len(zkNodeSet))
     else:
         _warn('ZooKeeper health checks timed out after %d seconds! Verified %d of %d' % (maxWait, len(zkNodeSet), n))
+
+
+def _is_private_subnet(cluster):
+    result = False
+
+    sstkCfg = _get_config()
+    if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster):
+        if sstkCfg['clusters'][cluster].has_key('is_private_subnet'):
+            result = sstkCfg['clusters'][cluster]['is_private_subnet']
+    else:
+        #no cached entry
+        cloud = _provider_api(cluster)
+        byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
+        _info("find_instance by tag: {0} for cloud: {1} and cluster: {2}".format(byTag, cloud, cluster))
+        for rsrv in byTag:
+            for inst in rsrv.instances:
+                _info("Checking instance: {0}".format(inst))
+                if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
+                    result = inst.public_dns_name is not None
+
+
+    #cache the result:
+    if sstkCfg.has_key('clusters') is False:
+        sstkCfg['clusters'] = {}
+
+    if sstkCfg['clusters'].has_key(cluster) is False:
+        sstkCfg['clusters'][cluster] = {}
+    sstkCfg['clusters'][cluster]['is_private_subnet'] = result
+
+    return result
+
 
 def _lookup_hosts(cluster, verify_ssh=False):
 
@@ -864,11 +900,11 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
     counter = 0
 
     nodesToRestart = []
-
+    is_private = _is_private_subnet(cluster)
     zkHost = _read_cloud_env(cluster)['ZK_HOST']
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
     solrJavaMemOpts = _read_cloud_env(cluster)['SOLR_JAVA_MEM']
-    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, yjp_path=yjp_path)
+    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path)
     solrInShPath = remoteSolrDir+'/bin/solr.in.sh'
 
     for solrHost in solrHostsAndPortsToRestart.keys():
@@ -1592,7 +1628,7 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solr
     numNodesPerHost = int(nodesPerHost)
     totalNodes = numNodesPerHost * len(hosts)
 
-    _info('Setting up %d SolrCloud nodes on cluster: %s' % (totalNodes, cluster))
+    _info('Setting up %d SolrCloud nodes on cluster: %s with hosts: %s' % (totalNodes, cluster, hosts))
 
     cloud = _provider_api(cluster)
 
@@ -1638,8 +1674,9 @@ export NODES_PER_HOST=%d
 export SOLR_JAVA_MEM="%s"
 ''' % (remoteSolrJavaHome, remoteSolrDir, zkHost, cluster, numNodesPerHost, solrJavaMemOpts))
 
+    is_private = _is_private_subnet(cluster)
     # write the include file for the bin/solr script
-    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, yjp_path=yjp_path)
+    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path)
     solrInShPath = remoteSolrDir+'/bin/solr.in.sh'
 
     sstkEnvScript = _env(cluster, 'SSTK_ENV')
