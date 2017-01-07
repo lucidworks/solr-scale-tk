@@ -25,6 +25,7 @@ import dateutil.parser
 import shutil
 import socket
 import boto.vpc
+import ntpath
 
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
@@ -3939,7 +3940,9 @@ def upload_solr_plugin_jars(cluster, jars):
     """
     pass
 
-def upload_fusion_plugin_jars(cluster, jars):
+
+
+def upload_fusion_plugin_jars(cluster, jars, n=None):
     """
     Upload the given plugin jars (which must be available locally to the Fusion lib directory
     """
@@ -3956,16 +3959,15 @@ def upload_fusion_plugin_jars(cluster, jars):
 
     # create a staging area on each remote host to load jars into
     remoteJarDir = '%s/apps/libs' % fusionHome
-    for h in hosts:
-        with settings(host_string=h), hide('output', 'running', 'warnings'):
-            run('rm -rf %s; mkdir -p %s' % (remoteJarDir,remoteJarDir))
 
     remoteJarFilesToCopy = set([])
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         host = hosts[0]
         run('mkdir -p %s/.ssh' % user_home)
-        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
+        local_key_name = ntpath.basename(local_key_path)
+        put(local_key_path, '%s/.ssh' % user_home)
+        run('chmod 600 {0}/.ssh/' + local_key_name)
         for jarFile in jarList:
             lastSlashAt = jarFile.rfind('/')
             jarFileName = jarFile[lastSlashAt+1:]
@@ -3980,7 +3982,7 @@ def upload_fusion_plugin_jars(cluster, jars):
             if len(hosts) > 1:
                 for h in range(1,len(hosts)):
                     host = hosts[h]
-                    run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteJarFile, ssh_user, host, remoteJarDir))
+                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (_get_file_name(local_key_name), remoteJarFile, ssh_user, host, remoteJarDir))
 
         _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
         _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')
@@ -4051,8 +4053,10 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         host = hosts[0]
         run('mkdir -p %s/.ssh' % user_home)
-        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
+        local_key_name = ntpath.basename(local_key_path)
+        put(local_key_path, '%s/.ssh' % user_home)
+        run('chmod 600 ' + user_home + "/.ssh/" + local_key_name)
         for jarFile in filesToPatch:
             lastSlashAt = jarFile.rfind('/')
             jarFileName = jarFile[lastSlashAt+1:]
@@ -4068,7 +4072,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
             if len(hosts) > 1:
                 for h in range(1,len(hosts)):
                     host = hosts[h]
-                    run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteJarFile, ssh_user, host, remoteJarDir))
+                    run('scp -o StrictHostKeyChecking=no -i %s/.ssh/%s %s %s@%s:%s' % (user_home, local_key_name, remoteJarFile, ssh_user, host, remoteJarDir))
 
         _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
         _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')
