@@ -536,7 +536,7 @@ def _is_private_subnet(cluster):
 
     sstkCfg = _get_config()
     if sstkCfg.has_key('clusters') and sstkCfg['clusters'].has_key(cluster) and sstkCfg['clusters'][cluster].has_key('is_private_subnet'):
-            result = sstkCfg['clusters'][cluster]['is_private_subnet']
+        result = sstkCfg['clusters'][cluster]['is_private_subnet']
     else:
         #no cached entry
         cloud = _provider_api(cluster)
@@ -544,9 +544,8 @@ def _is_private_subnet(cluster):
         _info("find_instance by tag: {0} for cloud: {1} and cluster: {2}".format(byTag, cloud, cluster))
         for rsrv in byTag:
             for inst in rsrv.instances:
-                _info("Checking instance: {0}".format(inst))
-                if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
-                    result = inst.public_dns_name is None
+                _info("Checking instance: {0}".format(inst.public_dns_name is None or inst.public_dns_name is ""))
+                result = inst.public_dns_name is None or inst.public_dns_name is ""
 
 
     #cache the result:
