@@ -107,6 +107,7 @@ def _copy_dir(src, dest):
         print('Directory not copied. Error: %s' % e)
 
 def _runbg( command, out_file="/dev/null", err_file=None, shell=True, pty=False ):
+    _info('_runbg: nohup %s >%s 2>%s </dev/null &' % (command, out_file, err_file or '&1'))
     run('nohup %s >%s 2>%s </dev/null &' % (command, out_file, err_file or '&1'), shell, pty)
 
 def _save_config():
@@ -3944,7 +3945,9 @@ def upload_solr_plugin_jars(cluster, jars):
 
 def upload_fusion_plugin_jars(cluster, jars, n=None):
     """
-    Upload the given plugin jars (which must be available locally to the Fusion lib directory
+    Upload the given plugin jars (which must be available locally to the Fusion lib directory.
+
+    Note, this does not restart Fusion.
     """
     #TODO: consolidate this with solr plugin jars and fusion_patch_jars
     cloud = _provider_api()
@@ -3967,7 +3970,7 @@ def upload_fusion_plugin_jars(cluster, jars, n=None):
         local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
         local_key_name = ntpath.basename(local_key_path)
         put(local_key_path, '%s/.ssh' % user_home)
-        run('chmod 600 {0}/.ssh/{1)'.format(user_home, local_key_name))
+        run('chmod 600 {0}/.ssh/{1}'.format(user_home, local_key_name))
         for jarFile in jarList:
             lastSlashAt = jarFile.rfind('/')
             jarFileName = jarFile[lastSlashAt+1:]
@@ -3982,24 +3985,9 @@ def upload_fusion_plugin_jars(cluster, jars, n=None):
             if len(hosts) > 1:
                 for h in range(1,len(hosts)):
                     host = hosts[h]
-                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (_get_file_name(local_key_name), remoteJarFile, ssh_user, host, remoteJarDir))
+                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (local_key_name, remoteJarFile, ssh_user, host, remoteJarDir))
 
-        _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
-        _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')
-
-    # copy the staged jars from tmp dir to all places in fusion on the rest of the hosts in the cluster
-    for h in range(1,len(hosts)):
-        _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
-        _status('Restarted API service on '+hosts[h]+' ... waiting up to 180 seconds to see it come back online.')
-
-    for h in range(0,len(hosts)):
-        apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[h], 180)
-        if apiIsRunning is False:
-            _fatal('Fusion API not responding on '+hosts[h]+'! Consult the Fusion API log for errors.')
-        else:
-            _info('Fusion API is running on '+hosts[h])
-
-    _info('JARs uploaded successfully.')
+    _info('JARs uploaded successfully.  You may need to restart Fusion services in order to have the jars be available on the classpath.')
 
 
 
