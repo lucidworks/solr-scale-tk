@@ -3967,7 +3967,7 @@ def upload_fusion_plugin_jars(cluster, jars, n=None):
         local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
         local_key_name = ntpath.basename(local_key_path)
         put(local_key_path, '%s/.ssh' % user_home)
-        run('chmod 600 {0}/.ssh/' + local_key_name)
+        run('chmod 600 {0}/.ssh/{1)'.format(user_home, local_key_name))
         for jarFile in jarList:
             lastSlashAt = jarFile.rfind('/')
             jarFileName = jarFile[lastSlashAt+1:]
