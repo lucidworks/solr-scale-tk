@@ -63,6 +63,7 @@ _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion'
 _config['fusion_vers'] = '2.4.2'
+_config['connector_memory_in_gb'] = 1
 
 instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
                         'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
@@ -2967,7 +2968,6 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     fusionBin = fusionHome+'/bin'
     fusionConf = fusionHome+'/conf'
     fusionLogs = fusionHome+'/var/log'
-
     apiJavaOpts = '-Xmx1g' if apiJavaMem is None else '-Xmx'+apiJavaMem
 
     # create the fusion.in.sh include file
@@ -3059,10 +3059,10 @@ GC_TUNE=(-XX:NewRatio=3 \
 
     agentPropsTemplate = """
 # Some defaults across all processes
-#zk.connect=%s
-default.zk.connect=%s
-#solr.zk.connect=%s
-default.solrZk.connect=%s
+#zk.connect={0}
+default.zk.connect={1}
+#solr.zk.connect={2}
+default.solrZk.connect={3}
 
 # garbage collection options can be "cms", "g1", "throughput" or "parallel", "serial" or "none"
 default.gc = cms
@@ -3082,12 +3082,12 @@ agent.port = 8091
 # API service
 api.port = 8765
 api.stopPort = 7765
-api.jvmOptions=%s -Xss256k -Djava.rmi.server.hostname=%s -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true
+api.jvmOptions={4} -Xss256k -Djava.rmi.server.hostname={5} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true
 
 # Connectors service
 connectors.port = 8763
 connectors.stopPort = 7763
-connectors.jvmOptions=-Xmx1g -Xss256k
+connectors.jvmOptions=-Xmx{6}g -Xss256k
 
 # Zookeeper
 zookeeper.port = 9983
@@ -3128,14 +3128,14 @@ if [ -d /vol0 ]; then
     fi
 fi
 """ % fusionHome
-
+    connMemory = _env(cluster, 'connector_memory_in_gb')
     cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
             run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak || true')
             _status('Uploading config.sh includes file to '+host)
             _fab_append(fusionConf+'/config.sh', fusionConfigSh)
-            fusionAgentProps = agentPropsTemplate % (fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host)
+            fusionAgentProps = agentPropsTemplate.format(fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host, connMemory)
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
