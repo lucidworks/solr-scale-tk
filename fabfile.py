@@ -3974,9 +3974,9 @@ def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, 
     _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
     _info("Adding jars to the classpath")
     if api:
-        add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
     if connectors:
-        add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
 
     if spark:
         remoteJarDir = '%s/apps/spark/lib' % fusionHome
@@ -3987,15 +3987,17 @@ def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, 
     #file("$searchhubFusionHome/apps/jetty/connectors/webapps/connectors-extra-classpath.txt").append(searchhubJar)
 
 
-def add_to_classpath(hosts, filesToAdd, classpath):
+def _add_to_classpath(hosts, filesToAdd, classpath):
     _info("Adding {0} to the classpath : {1}".format(filesToAdd, classpath))
     #make a backup of the classpath file
-    for h in range(1,len(hosts)):
+    for h in range(0,len(hosts)):
         with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
+            _info("Backing up {0} on {1}".format(classpath, hosts[h]))
             run("cp {0} {0}.bak".format(classpath))
             for file in filesToAdd:
-                run("echo '' {0}".format(classpath))
-                run("echo {0} {1}".format(file, classpath))
+                _info("Appending {0} to {1}".format(file, classpath))
+                run("echo '' >> {0}".format(classpath))
+                run("echo {0} >> {1}".format(file, classpath))
 
 def upload_remote_files(cluster, hosts, fileList, remoteDir):
     remoteFilesToCopy = set([])
