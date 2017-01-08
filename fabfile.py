@@ -25,6 +25,7 @@ import dateutil.parser
 import shutil
 import socket
 import boto.vpc
+import ntpath
 
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
@@ -106,6 +107,7 @@ def _copy_dir(src, dest):
         print('Directory not copied. Error: %s' % e)
 
 def _runbg( command, out_file="/dev/null", err_file=None, shell=True, pty=False ):
+    _info('_runbg: nohup %s >%s 2>%s </dev/null &' % (command, out_file, err_file or '&1'))
     run('nohup %s >%s 2>%s </dev/null &' % (command, out_file, err_file or '&1'), shell, pty)
 
 def _save_config():
@@ -3187,7 +3189,7 @@ fi
                 _info('Started Fusion API service on '+host)
 
     if numConnectorsNodes > 0:
-        _status('Starting Fusion Connectors service on %d nodes.' % numUINodes)
+        _status('Starting Fusion Connectors service on %d nodes.' % numConnectorsNodes)
         for host in hosts[0:numConnectorsNodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/connectors stop || true')
@@ -3932,6 +3934,100 @@ def report_fusion_metrics(cluster,collection):
 
     return totalCount
 
+
+def upload_solr_plugin_jars(cluster, jars):
+    """
+    Upload the given jars (which must be available locally to the Solr lib directory
+
+    Note: this does not restart Solr
+    """
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    jarList = jars.split()
+    if n is not None:
+        hosts = [hosts[int(n)]]
+    _verify_ssh_connectivity(hosts)
+    solrTip = _env(cluster, 'solr_tip')
+    # create a staging area on each remote host to load jars into
+    remoteJarDir = '%s/server/solr-webapp/webapp/WEB-INF/lib/' % solrTip
+    remoteJarFilesToCopy = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+    _info('JARs uploaded successfully: {0}.  You may need to restart Solr services in order to have the jars be available on the classpath.'.format(remoteJarFilesToCopy))
+
+
+
+def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, api=True, connectors=True):
+    """
+    Upload the given plugin jars (which must be available locally to the Fusion lib directory.
+
+    Note, this does not restart Fusion.
+    """
+    cloud = _provider_api()
+    hosts = _cluster_hosts(cloud, cluster)
+    jarList = jars.split()
+    if n is not None:
+        hosts = [hosts[int(n)]]
+    _verify_ssh_connectivity(hosts)
+    fusionHome = _env(cluster, 'fusion_home')
+    # create a staging area on each remote host to load jars into
+    remoteJarDir = '%s/apps/libs' % fusionHome
+    remoteFilesCopied = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+    _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
+    _info("Adding jars to the classpath")
+    if api:
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
+    if connectors:
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
+
+    if spark:
+        remoteJarDir = '%s/apps/spark/lib' % fusionHome
+        remoteFilesCopied = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+        _info('JARs uploaded successfully for Spark: {0}.  You may need to restart Spark services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
+    # Need to add the files to the classpaths
+    #file("$searchhubFusionHome/apps/jetty/api/webapps/api-extra-classpath.txt").append(searchhubJar)
+    #file("$searchhubFusionHome/apps/jetty/connectors/webapps/connectors-extra-classpath.txt").append(searchhubJar)
+
+
+def _add_to_classpath(hosts, filesToAdd, classpath):
+    _info("Adding {0} to the classpath : {1}".format(filesToAdd, classpath))
+    #make a backup of the classpath file
+    for h in range(0,len(hosts)):
+        with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
+            _info("Backing up {0} on {1}".format(classpath, hosts[h]))
+            run("cp {0} {0}.bak".format(classpath))
+            for file in filesToAdd:
+                _info("Appending {0} to {1}".format(file, classpath))
+                run("echo '' >> {0}".format(classpath))
+                run("echo {0} >> {1}".format(file, classpath))
+
+def upload_remote_files(cluster, hosts, fileList, remoteDir):
+    remoteFilesToCopy = set([])
+    with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
+        host = hosts[0]
+        #Make sure we have the key as needed
+        run('mkdir -p %s/.ssh' % user_home)
+        local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
+        local_key_name = ntpath.basename(local_key_path)
+        put(local_key_path, '%s/.ssh' % user_home)
+        run('chmod 600 {0}/.ssh/{1}'.format(user_home, local_key_name))
+        for theFile in fileList:
+            lastSlashAt = theFile.rfind('/')
+            fileName = theFile[lastSlashAt + 1:]
+            remoteFile = '%s/%s' % (remoteDir, fileName)
+            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (theFile, remoteFile, host))
+            put(theFile, remoteFile)
+            # run('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, fileName, remoteFile))
+
+            remoteFilesToCopy.add(remoteFile)
+
+            # scp from the first host to the rest
+            if len(hosts) > 1:
+                for h in range(1, len(hosts)):
+                    host = hosts[h]
+                    run('scp -o StrictHostKeyChecking=no -i ~/.ssh/%s %s %s@%s:%s' % (
+                        local_key_name, remoteFile, ssh_user, host, remoteDir))
+    return remoteFilesToCopy
+
+
 def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAPSHOT', remoteVers='2.1.0'):
     """
     Replaces Fusion JAR files on remote servers with new ones built locally.
@@ -3982,8 +4078,10 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
     with settings(host_string=hosts[0]), hide('output', 'running', 'warnings'):
         host = hosts[0]
         run('mkdir -p %s/.ssh' % user_home)
-        put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-        run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
+        local_key_path = _env(cluster, 'ssh_keyfile_path_on_local')
+        local_key_name = ntpath.basename(local_key_path)
+        put(local_key_path, '%s/.ssh' % user_home)
+        run('chmod 600 ' + user_home + "/.ssh/" + local_key_name)
         for jarFile in filesToPatch:
             lastSlashAt = jarFile.rfind('/')
             jarFileName = jarFile[lastSlashAt+1:]
@@ -3999,7 +4097,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
             if len(hosts) > 1:
                 for h in range(1,len(hosts)):
                     host = hosts[h]
-                    run('scp -o StrictHostKeyChecking=no -i %s %s %s@%s:%s' % (_env(cluster,'ssh_keyfile_path_on_local'), remoteJarFile, ssh_user, host, remoteJarDir))
+                    run('scp -o StrictHostKeyChecking=no -i %s/.ssh/%s %s %s@%s:%s' % (user_home, local_key_name, remoteJarFile, ssh_user, host, remoteJarDir))
 
         _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
         _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')

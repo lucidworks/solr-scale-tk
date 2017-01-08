@@ -147,6 +147,12 @@ You can name the security group and keypair whatever you want, however if you ch
 "AWS_SECURITY_GROUP":"solr-scale-tk-tjp",
 ```
 
+Private Subnets
+--------
+
+If you are deploying into a private subnet, you must insure that the machine you are running SSTK on has access to ports: 2181, 8984, 8764, 8765 (the last two are for Fusion only)
+
+
 Using the US West (N. California) Region
 --------
 
