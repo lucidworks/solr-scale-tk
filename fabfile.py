@@ -3955,13 +3955,12 @@ def upload_solr_plugin_jars(cluster, jars):
 
 
 
-def upload_fusion_plugin_jars(cluster, jars, n=None):
+def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, api=True, connectors=True):
     """
     Upload the given plugin jars (which must be available locally to the Fusion lib directory.
 
     Note, this does not restart Fusion.
     """
-    #TODO: consolidate this with solr plugin jars and fusion_patch_jars
     cloud = _provider_api()
     hosts = _cluster_hosts(cloud, cluster)
     jarList = jars.split()
@@ -3971,8 +3970,29 @@ def upload_fusion_plugin_jars(cluster, jars, n=None):
     fusionHome = _env(cluster, 'fusion_home')
     # create a staging area on each remote host to load jars into
     remoteJarDir = '%s/apps/libs' % fusionHome
-    remoteJarFilesToCopy = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
-    _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteJarFilesToCopy))
+    remoteFilesCopied = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+    _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
+    _info("Adding jars to the classpath")
+    if api:
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
+    if connectors:
+        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
+
+    if spark:
+        remoteJarDir = '%s/apps/spark/libs' % fusionHome
+        remoteFilesCopied = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
+        _info('JARs uploaded successfully for Spark: {0}.  You may need to restart Spark services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
+    # Need to add the files to the classpaths
+    #file("$searchhubFusionHome/apps/jetty/api/webapps/api-extra-classpath.txt").append(searchhubJar)
+    #file("$searchhubFusionHome/apps/jetty/connectors/webapps/connectors-extra-classpath.txt").append(searchhubJar)
+
+
+def _add_to_classpath(hosts, filesToAdd, classpath):
+    _info("Adding {0} to the classpath : {1}".format(filesToAdd, classpath))
+    #make a backup of the classpath file
+    for h in range(1,len(hosts)):
+        with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
+            run("cp {0} {0}.bak".format(classpath))
 
 
 def upload_remote_files(cluster, hosts, fileList, remoteDir):
@@ -3989,12 +4009,11 @@ def upload_remote_files(cluster, hosts, fileList, remoteDir):
             lastSlashAt = theFile.rfind('/')
             fileName = theFile[lastSlashAt + 1:]
             remoteFile = '%s/%s' % (remoteDir, fileName)
-            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (
-            theFile, remoteFile, host))
+            _status('Uploading local file %s to %s on %s ... please be patient (the other hosts will go faster)' % (theFile, remoteFile, host))
             put(theFile, remoteFile)
             # run('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, fileName, remoteFile))
 
-            remoteFilesToCopy.add(fileName)
+            remoteFilesToCopy.add(remoteFile)
 
             # scp from the first host to the rest
             if len(hosts) > 1:
