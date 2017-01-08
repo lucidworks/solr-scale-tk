@@ -3974,9 +3974,9 @@ def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, 
     _info('JARs uploaded successfully: {0}.  You may need to restart Fusion services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
     _info("Adding jars to the classpath")
     if api:
-        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
+        add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/api/webapps/api-extra-classpath.txt".format(fusionHome))
     if connectors:
-        _add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
+        add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
 
     if spark:
         remoteJarDir = '%s/apps/spark/libs' % fusionHome
@@ -3987,7 +3987,7 @@ def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, 
     #file("$searchhubFusionHome/apps/jetty/connectors/webapps/connectors-extra-classpath.txt").append(searchhubJar)
 
 
-def _add_to_classpath(hosts, filesToAdd, classpath):
+def add_to_classpath(hosts, filesToAdd, classpath):
     _info("Adding {0} to the classpath : {1}".format(filesToAdd, classpath))
     #make a backup of the classpath file
     for h in range(1,len(hosts)):
