@@ -3979,7 +3979,7 @@ def upload_fusion_plugin_jars(cluster, jars, services=None, n=None, spark=True, 
         add_to_classpath(hosts, remoteFilesCopied, "{0}/apps/jetty/connectors/webapps/connectors-extra-classpath.txt".format(fusionHome))
 
     if spark:
-        remoteJarDir = '%s/apps/spark/libs' % fusionHome
+        remoteJarDir = '%s/apps/spark/lib' % fusionHome
         remoteFilesCopied = upload_remote_files(cluster, hosts, jarList, remoteJarDir)
         _info('JARs uploaded successfully for Spark: {0}.  You may need to restart Spark services in order to have the jars be available on the classpath.'.format(remoteFilesCopied))
     # Need to add the files to the classpaths
@@ -3993,7 +3993,9 @@ def add_to_classpath(hosts, filesToAdd, classpath):
     for h in range(1,len(hosts)):
         with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
             run("cp {0} {0}.bak".format(classpath))
-
+            for file in filesToAdd:
+                run("echo '' {0}".format(classpath))
+                run("echo {0} {1}".format(file, classpath))
 
 def upload_remote_files(cluster, hosts, fileList, remoteDir):
     remoteFilesToCopy = set([])
