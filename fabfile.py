@@ -3189,7 +3189,7 @@ fi
                 _info('Started Fusion API service on '+host)
 
     if numConnectorsNodes > 0:
-        _status('Starting Fusion Connectors service on %d nodes.' % numUINodes)
+        _status('Starting Fusion Connectors service on %d nodes.' % numConnectorsNodes)
         for host in hosts[0:numConnectorsNodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/connectors stop || true')
