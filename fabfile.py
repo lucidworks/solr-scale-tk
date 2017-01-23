@@ -177,7 +177,7 @@ def _env(cluster, key, defaultValue=None):
     return _expand_config_var(cluster, val)
 
 def _get_ec2_provider(region):
-    _info("Region used: " + region)
+    _info("Region used: " + str(region))
     if region is not None:
         return boto.ec2.connect_to_region(region)
     else:
