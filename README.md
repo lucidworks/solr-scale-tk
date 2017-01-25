@@ -3,12 +3,6 @@ Solr Scale Toolkit
 
 Fabric-based framework for deploying and managing SolrCloud clusters in the cloud.
 
-Questions?
-========
-
-Please visit the Google Groups forum - https://groups.google.com/forum/#!forum/solr-scale-toolkit
-
-
 Setup
 ========
 
