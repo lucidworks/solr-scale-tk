@@ -62,7 +62,7 @@ _config['AWS_AZ'] = AWS_AZ
 _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
 _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
-_config['fusion_home'] = '${user_home}/fusion'
+_config['fusion_home'] = '${user_home}/fusion/3.0.0'
 _config['fusion_vers'] = '3.0.0'
 _config['connector_memory_in_gb'] = '1'
 
