@@ -3170,14 +3170,15 @@ fi
             time.sleep(2)
             _info('Started Spark Master service on '+host)
 
-    # start Spark Workers on all nodes where there will be an API
-    _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-    for host in hosts:
-        with settings(host_string=host), hide('output', 'running'):
-            run(fusionBin+'/spark-worker stop || true')
-            _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-            time.sleep(2)
-            _info('Started Spark-Worker service on '+host)
+    # start Spark Workers on all nodes where there will be an API ... unless master = 0
+    if numSparkMasterNodes > 0:
+        _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
+        for host in hosts:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/spark-worker stop || true')
+                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+                time.sleep(2)
+                _info('Started Spark-Worker service on '+host)
 
     if numApiNodes > 0:
         _status('Starting Fusion API service on %d nodes.' % numApiNodes)
