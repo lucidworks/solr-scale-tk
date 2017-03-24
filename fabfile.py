@@ -14,6 +14,7 @@ from urllib import urlretrieve as _urlretrieve
 import boto.ec2
 import time
 import sys
+import os
 import urllib2
 import getpass
 import json
@@ -26,6 +27,7 @@ import shutil
 import socket
 import boto.vpc
 import ntpath
+from distutils.version import StrictVersion
 
 
 # Global constants used in this module; only change this if you know what you're doing ;-)
@@ -65,6 +67,7 @@ _config['AWS_KEY_NAME'] = AWS_KEY_NAME
 _config['fusion_home'] = '${user_home}/fusion/3.0.0'
 _config['fusion_vers'] = '3.0.0'
 _config['connector_memory_in_gb'] = '1'
+_config['owner'] = getpass.getuser()
 
 instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0,
                         'm3.medium':1, 'm3.large':1, 'm3.xlarge':2, 'm3.2xlarge':2,
@@ -1351,6 +1354,7 @@ def new_ec2_instances(cluster,
                       placement_group=None,
                       skipStores=None,
                       purpose=None,
+                      project=None,
                       vpcSubnetId=None,
                       vpcSecurityGroupId=None,
                       customTags='{"CostCenter":"eng"}',
@@ -1529,8 +1533,11 @@ def new_ec2_instances(cluster,
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
     if purpose is None:
-        purpose = 'Solr/Fusion performance testing in a multi-node cluster.'
-    description = 'Launched on '+nowStr+' by '+username+' for '+purpose
+        purpose = 'testing'
+    if project is None:
+        project = 'sstk'
+    description = 'Launched on '+nowStr+' by '+username+' for Fusion multi node testing'
+    owner = _env(cluster, 'owner')
 
     customTagsJson = None
     if customTags is not None:
@@ -1542,8 +1549,10 @@ def new_ec2_instances(cluster,
             inst.add_tag("Name", cluster+'_'+str(idx))
             inst.add_tag(CLUSTER_TAG, cluster)
             inst.add_tag(USERNAME_TAG, username)
-            inst.add_tag('Owner', username)
+            inst.add_tag('Owner', owner)
             inst.add_tag('Description', description)
+            inst.add_tag('Purpose', purpose)
+            inst.add_tag('Project', project)
             inst.add_tag(INSTANCE_STORES_TAG, numStores)
             if customTagsJson is not None:
                 for tagName, tagValu in customTagsJson.iteritems():
@@ -1557,8 +1566,10 @@ def new_ec2_instances(cluster,
             inst.add_tag("Name", cluster+'_'+str(idx))
             inst.add_tag(CLUSTER_TAG, cluster)
             inst.add_tag(USERNAME_TAG, username)
-            inst.add_tag('Owner', username)
+            inst.add_tag('Owner', owner)
             inst.add_tag('Description', description)
+            inst.add_tag('Purpose', purpose)
+            inst.add_tag('Project', project)
             inst.add_tag(INSTANCE_STORES_TAG, numStores)
             if customTagsJson is not None:
                 for tagName, tagValu in customTagsJson.iteritems():
@@ -1684,11 +1695,18 @@ export SOLR_JAVA_MEM="%s"
     sstkScript = _env(cluster, 'SSTK')
     binSolrScript = remoteSolrDir + '/bin/solr'
     cloudDir = _env(cluster, 'sstk_cloud_dir')
+    solrTip = _env(cluster, 'solr_tip')
+    solrVersion = os.path.basename(solrTip).split("-")[1]
 
-    # bootstrap zk
-    with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
-        _info(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
-        run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
+    #Bootstrap ZK
+    if StrictVersion(solrVersion) >= StrictVersion("6.4.2"):
+        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+            _info(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
+            run(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
+    else:
+        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+            _info(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
+            run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
 
     for host in hosts:
         with settings(host_string=host), hide('output', 'running'):
@@ -1897,7 +1915,7 @@ def kill(cluster):
     _save_config()
 
 # pretty much just chains a bunch of commands together to create a new solr cloud cluster ondemand
-def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, customTags='{"CostCenter":"eng"}',rootEbsVolSize=None):
+def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=None, ami=None, az=None, placement_group=None, yjp_path=None, auto_confirm=False, solrJavaMemOpts=None, purpose=None, project=None, customTags='{"CostCenter":"eng"}',rootEbsVolSize=None):
     """
     Provisions n EC2 instances and then deploys SolrCloud; uses the new_ec2_instances and setup_solrcloud
     commands internally to execute this command.
@@ -1933,7 +1951,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if autoConfirm is False and confirm('Verify the parameters. OK to proceed?') is False:
         return
 
-    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose, customTags=customTags, rootEbsVolSize=rootEbsVolSize)
+    ec2hosts = new_ec2_instances(cluster=cluster, n=n, instance_type=instance_type, ami=ami, az=az, placement_group=placement_group, purpose=purpose, project=project,customTags=customTags, rootEbsVolSize=rootEbsVolSize)
     hosts = setup_solrcloud(cluster=cluster, zk=zk, zkn=zkn, nodesPerHost=nodesPerHost, yjp_path=yjp_path, solrJavaMemOpts=solrJavaMemOpts)
     solrUrl = 'http://%s:8984/solr/#/' % str(hosts[0])
     _info('Successfully launched new SolrCloud cluster ' + cluster + '; visit: ' + solrUrl)
@@ -2111,7 +2129,7 @@ def demo(demoCluster, n=3, instance_type='m3.medium'):
     Demo of all this script's capabilities in one command.
     The result is a SolrCloud cluster with all the fixin's ...
     """
-    ec2hosts = new_ec2_instances(cluster=demoCluster, n=n, instance_type=instance_type, purpose='sstk demo', customTags='{"CostCenter":"eng"}')
+    ec2hosts = new_ec2_instances(cluster=demoCluster, n=n, instance_type=instance_type, purpose='sstk demo', project = 'sstk demo', customTags='{"CostCenter":"eng"}')
     numHosts = len(ec2hosts)
     # print them out to the console if it is a small number
     if numHosts < 10:
@@ -3287,7 +3305,7 @@ def fusion_demo(cluster, n=1, instance_type='m3.large'):
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
     fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
-    new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo',customTags='{"CostCenter":"eng"}')
+    new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo',project='Fusion',customTags='{"CostCenter":"eng"}')
     deploy_config(cluster,'perf','cloud')
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,api=n)
@@ -3676,7 +3694,8 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
                   yjp_path=yjp_path_solr,
                   auto_confirm=True,
                   solrJavaMemOpts=solrJavaMemOpts,
-                  purpose='Fusion Performance Testing',customTags='{"CostCenter":"eng"}')
+                  purpose='Fusion Performance Testing',customTags='{"CostCenter":"eng"}',
+                  project='sstk')
     _status('SolrCloud cluster provisioned ... deploying the perf config directory to ZK as name: perf')
     deploy_config(cluster,'perf','perf')
     deploy_config(cluster,'perf','perf_js')
@@ -3759,7 +3778,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     numHadoopNodes = 6
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
-    tag_emr_instances(emrCluster,'Fusion Performance Testing',region,customTags='{"CostCenter":"eng"}')
+    tag_emr_instances(emrCluster,'Fusion Performance Testing','sstk',region,customTags='{"CostCenter":"eng"}')
 
     # now run the performance test steps in the EMR workflow
     fusion_perf_test_steps(emrCluster,cluster,collection,numShards,repFact,numReducers,bufferSize,region,maxWaitSecs,index_solr_too,enable_partition)
@@ -4122,14 +4141,16 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
 
     _info('JARs uploaded and patched successfully.')
     
-def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
+def tag_emr_instances(emrCluster,purpose,project,region='us-east-1',customTags=None):
     ec2 = _provider_api()
     username = getpass.getuser()
 
     now = datetime.datetime.utcnow()
     nowStr = now.strftime("%Y%m%d-%H%M%S")
     if purpose is None:
-        purpose = '?unknown?'
+        purpose = 'Fusion Spark multi-node testing'
+    if project is None:
+        project = 'Smart data Fusion testing'
     description = 'Launched on '+nowStr+' by '+username+' for '+purpose
 
     emr = boto.emr.connect_to_region(region)
@@ -4141,13 +4162,16 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
     customTagsJson = None
     if customTags is not None:
         customTagsJson = json.loads(customTags)
+    owner = _env(cluster, owner)
 
     for rsrv in byTag:
         for inst in rsrv.instances:
             try:
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
-                inst.add_tag('Owner', username)
+                inst.add_tag('Owner', owner)
                 inst.add_tag('Description', description)
+                inst.add_tag('Purpose', purpose)
+                inst.add_tag('Project', project)
                 if customTagsJson is not None:
                     for tagName, tagValu in customTagsJson.iteritems():
                         inst.add_tag(tagName, tagValu)
@@ -4157,8 +4181,10 @@ def tag_emr_instances(emrCluster,purpose,region='us-east-1',customTags=None):
                 _error('Error when tagging instance %s due to: %s ... will retry in 5 seconds ...' % (inst.id, str(e)))
                 time.sleep(5)
                 inst.add_tag("Name", emrCluster+'_'+str(idx))
-                inst.add_tag('Owner', username)
+                inst.add_tag('Owner', owner)
                 inst.add_tag('Description', description)
+                inst.add_tag('Purpose', purpose)
+                inst.add_tag('Project', project)
                 if customTagsJson is not None:
                     for tagName, tagValu in customTagsJson.iteritems():
                         inst.add_tag(tagName, tagValu)
@@ -4327,18 +4353,30 @@ export SPARK_WORKER_MEMORY={0}
 export SPARK_WORKER_CORES={1}
 """.format(worker_mem, worker_cores)
     remoteDir = _env(cluster, 'user_home')
+    fusionHome = _env(cluster, 'fusion_home')
+
     hosts = _lookup_hosts(cluster, False)
     for host in hosts:
         with settings(host_string=host):
-            _fab_append(remoteDir + "/fusion/apps/spark-dist/conf/spark-env.sh", sparkEnvConf)
+            _fab_append(fusionHome  + "/apps/spark-dist/conf/spark-env.sh", sparkEnvConf)
+
+def stop_fusion(cluster):
+    hosts = _lookup_hosts(cluster)
+    fusionHome = _env(cluster, 'fusion_home')
+
+    for host in hosts:
+        with settings(host_string=host):
+            run("cd {} && bin/fusion stop all".format(fusionHome), shell=True, stderr=sys.stdout)
 
 def restart_spark(cluster):
     hosts = _lookup_hosts(cluster)
+    fusionHome = _env(cluster, 'fusion_home')
+
     for host in hosts:
         with settings(host_string=host):
-            run("cd fusion && bin/spark-worker restart && bin/spark-worker status", shell=True, stderr=sys.stdout)
+            run("cd {} && bin/spark-worker restart && bin/spark-worker status".format(fusionHome), shell=True, stderr=sys.stdout)
     with settings(host_string=hosts[0]):
-        run("cd fusion && bin/spark-master restart && bin/spark-master status", shell=True)
+        run("cd {} && bin/spark-master restart && bin/spark-master status".format(fusionHome), shell=True)
 
 def setup_spark_jdbc_jar(cluster,localJar):
     jarFile = os.path.expanduser(localJar)
@@ -4348,6 +4386,7 @@ def setup_spark_jdbc_jar(cluster,localJar):
     lastSlashAt = jarFile.rfind('/')
     jarFileName = jarFile[lastSlashAt+1:]
     remoteDir = _env(cluster,'user_home')
+    fusionHome = _env(cluster, 'fusion_home')
 
     sparkDefaultsConf = """
 spark.driver.extraClassPath        %s/%s
@@ -4358,7 +4397,8 @@ spark.executor.extraClassPath      %s/%s
     for host in hosts:
         with settings(host_string=host):
             put(jarFile, remoteDir+'/')
-            _fab_append(remoteDir+'/fusion/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
+            _fab_append(fusionHome + '/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
+
 
 def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', maxWaitSecs=2700):
     bufferSize = 3000
