@@ -3778,7 +3778,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
     numHadoopNodes = 6
     numReducers = numHadoopNodes * 3 # 4 reducer slots per m1.xlarge
     emr_new_cluster(emrCluster,region=region,num=numHadoopNodes)
-    tag_emr_instances(emrCluster,'Fusion Performance Testing','sstk',region,customTags='{"CostCenter":"eng"}')
+    tag_emr_instances(cluster,emrCluster,'Fusion Performance Testing','sstk',region,customTags='{"CostCenter":"eng"}')
 
     # now run the performance test steps in the EMR workflow
     fusion_perf_test_steps(emrCluster,cluster,collection,numShards,repFact,numReducers,bufferSize,region,maxWaitSecs,index_solr_too,enable_partition)
@@ -4141,7 +4141,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
 
     _info('JARs uploaded and patched successfully.')
     
-def tag_emr_instances(emrCluster,purpose,project,region='us-east-1',customTags=None):
+def tag_emr_instances(cluster,emrCluster,purpose,project,region='us-east-1',customTags=None):
     ec2 = _provider_api()
     username = getpass.getuser()
 
@@ -4162,7 +4162,7 @@ def tag_emr_instances(emrCluster,purpose,project,region='us-east-1',customTags=N
     customTagsJson = None
     if customTags is not None:
         customTagsJson = json.loads(customTags)
-    owner = _env(cluster, owner)
+    owner = _env(cluster, 'owner')
 
     for rsrv in byTag:
         for inst in rsrv.instances:
