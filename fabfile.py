@@ -34,7 +34,7 @@ from distutils.version import StrictVersion
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_HVM_AMI_ID = 'ami-6ef86278'
+AWS_HVM_AMI_ID = 'ami-c14576d7'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'r3.large'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -53,7 +53,7 @@ _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
 _config['solr_java_home'] = '${user_home}/jdk1.8.0_121'
-_config['solr_tip'] = '${user_home}/solr-6.4.2'
+_config['solr_tip'] = '${user_home}/solr-6.5.1'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -64,8 +64,8 @@ _config['AWS_AZ'] = AWS_AZ
 _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
 _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
-_config['fusion_home'] = '${user_home}/fusion/3.0.1'
-_config['fusion_vers'] = '3.0.1'
+_config['fusion_home'] = '${user_home}/fusion/3.1.0'
+_config['fusion_vers'] = '3.1.0'
 _config['connector_memory_in_gb'] = '1'
 _config['owner'] = getpass.getuser()
 
@@ -1174,7 +1174,7 @@ def _wait_to_see_fusion_api_up(cluster, apiHost, maxWait):
     if maxWait > 10:
         _status('Will wait up to '+str(maxWait)+' secs to see Fusion API service up on host: '+apiHost)
 
-    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
+    fusionVers = _env(cluster, 'fusion_vers', defaultValue='3.1.0')
     path = 'system/ping'
     while isRunning is False and waitTime < int(maxWait):
         isRunning = False
@@ -2993,86 +2993,6 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     # create the fusion.in.sh include file
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     # sstk starts Solr on 8984, so we need to change the connectors port
-    fusionConfigSh = ''
-
-    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
-
-    if fusionVers.startswith("3.") is False:
-        fusionConfigSh = ('''
-# Auto-generated config created by solr-scale-tk
-API_PORT=8765
-API_STOP_PORT=7765
-API_STOP_KEY=fusion
-RMI_HOST=`curl -s http://169.254.169.254/latest/meta-data/public-hostname`
-API_JAVA_OPTIONS=(%s -Xss256k -Djava.rmi.server.hostname=$RMI_HOST -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true)
-
-CONNECTORS_PORT=8763
-CONNECTORS_STOP_PORT=7763
-CONNECTORS_STOP_KEY=fusion
-CONNECTORS_JAVA_OPTIONS=(-Xmx2g -Xss256k -Dapple.awt.UIElement=true)
-
-SOLR_PORT=8984
-SOLR_STOP_PORT=7984
-SOLR_STOP_KEY=fusion
-SOLR_JAVA_OPTIONS=(-Xmx2g -Xss256k -Dapple.awt.UIElement=true)
-
-UI_PORT=8764
-UI_STOP_PORT=7764
-UI_STOP_KEY=fusion
-UI_JAVA_OPTIONS=(%s -Dapple.awt.UIElement=true)
-
-SPARK_MASTER_PORT=8766
-SPARK_MASTER_UI_PORT=8767
-SPARK_MASTER_JAVA_OPTIONS=(-Xmx512m -Dapple.awt.UIElement=true)
-
-SPARK_JOB_SERVER_PORT=8768
-
-SPARK_WORKER_PORT=8769
-SPARK_WORKER_UI_PORT=8770
-SPARK_WORKER_JAVA_OPTIONS=(-Xmx2g -XX:MaxPermSize=256m -Dapple.awt.UIElement=true)
-
-# The FUSION_ZK is the address of the ZooKeeper cluster where Fusion keeps
-# track of its various services and stores its own configuration.
-# The FUSION_SOLR_ZK is used to locate the Solr cluster where Fusion
-# creates its internal collections (logs, metrics etc), and to change
-# solr configuration if expliticly asked via our APIs.
-ZOOKEEPER_PORT=2181
-FUSION_ZK=%s
-FUSION_SOLR_ZK=%s
-
-# Enable verbose GC logging
-GC_LOG_OPTS=(-verbose:gc \
-	-XX:+PrintHeapAtGC \
-	-XX:+PrintGCDetails \
-	-XX:+PrintGCDateStamps \
-	-XX:+PrintGCCause \
-	-XX:+PrintTenuringDistribution \
-	-XX:+UseGCLogFileRotation \
-	-XX:NumberOfGCLogFiles=20 \
-	-XX:GCLogFileSize=10M)
-
-# The origins that are allowed to serve resources
-FUSION_CORS_ALLOW_ORIGIN=\.\*
-
-# These GC settings have shown to work well for a number of common Solr workloads
-GC_TUNE=(-XX:NewRatio=3 \
-	-XX:SurvivorRatio=4 \
-	-XX:TargetSurvivorRatio=90 \
-	-XX:MaxTenuringThreshold=8 \
-	-XX:+UseConcMarkSweepGC \
-	-XX:+UseParNewGC \
-	-XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 \
-	-XX:+CMSScavengeBeforeRemark \
-	-XX:PretenureSizeThreshold=64m \
-	-XX:CMSInitiatingOccupancyFraction=50 \
-	-XX:CMSMaxAbortablePrecleanTime=6000 \
-	-XX:+CMSParallelRemarkEnabled \
-	-XX:+ParallelRefProcEnabled)
-''' % (apiJavaOpts, apiJavaOpts, zkHost, zkHost))
-
-        if yjp_path is not None:
-            fusionConfigSh += '\nAPI_JAVA_OPTIONS="$API_JAVA_OPTIONS -agentpath:'+yjp_path+'/bin/linux-x86-64/libyjpagent.so"\n'
-
     slashAt = zkHost.find('/')
     fusionZk = zkHost if slashAt == -1 else zkHost[0:slashAt]
     print('zkHost=%s, fusionZk=%s' % (zkHost, fusionZk))
@@ -3128,6 +3048,7 @@ spark-master.jvmOptions = -Xmx512m
 spark-worker.port = 8769
 spark-worker.uiPort = 8770
 spark-worker.jvmOptions = -Xmx1g
+spark-worker.envVars={{"SPARK_SCALA_VERSION":"2.11", "SPARK_WORKER_CORES":"16"}}
 
 # UI
 ui.port = 8764
@@ -3152,9 +3073,6 @@ fi
     cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            run('mv '+fusionConf+'/config.sh '+fusionConf+'/config.sh.bak || true')
-            _status('Uploading config.sh includes file to '+host)
-            _fab_append(fusionConf+'/config.sh', fusionConfigSh)
             fusionAgentProps = agentPropsTemplate.format(fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host, connMemory)
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
@@ -3179,24 +3097,6 @@ fi
     numSparkMasterNodes = int(smasters)
     if numSparkMasterNodes > len(hosts):
         _fatal('Cannot start more than %d Spark master nodes!' % len(hosts))
-
-    _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
-    for host in hosts[0:numSparkMasterNodes]:
-        with settings(host_string=host), hide('output', 'running'):
-            run(fusionBin+'/spark-master stop || true')
-            _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-            time.sleep(2)
-            _info('Started Spark Master service on '+host)
-
-    # start Spark Workers on all nodes where there will be an API ... unless master = 0
-    if numSparkMasterNodes > 0:
-        _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-        for host in hosts:
-            with settings(host_string=host), hide('output', 'running'):
-                run(fusionBin+'/spark-worker stop || true')
-                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-                time.sleep(2)
-                _info('Started Spark-Worker service on '+host)
 
     if numApiNodes > 0:
         _status('Starting Fusion API service on %d nodes.' % numApiNodes)
@@ -3235,6 +3135,25 @@ fi
     if fusionUIUrl is not None:
         _info('Fusion is running, please go to: '+fusionUIUrl)
 
+    _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
+    for host in hosts[0:numSparkMasterNodes]:
+        with settings(host_string=host), hide('output', 'running'):
+            run(fusionBin+'/spark-master stop || true')
+            _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+            time.sleep(2)
+            _info('Started Spark Master service on '+host)
+
+    # start Spark Workers on all nodes where there will be an API ... unless master = 0
+    if numSparkMasterNodes > 0:
+        _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
+        time.sleep(10) # give time for the master to start
+        for host in hosts:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/spark-worker stop || true')
+                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+                time.sleep(2)
+                _info('Started Spark-Worker service on '+host)
+
 
 def fusion_stop(cluster):
     """
@@ -3261,10 +3180,10 @@ def fusion_status(cluster):
     fusionHome = _env(cluster, 'fusion_home')
     for host in hosts:
         with settings(host_string=host):
-            run(fusionHome+'/bin/fusion status')
+            run(fusionHome+'/bin/fusion status all')
     cluster_status(cluster)
 
-def fusion_setup(cluster,vers='2.4.2'):
+def fusion_setup(cluster,vers='3.1.0'):
     """
     Downloads and installs the specified Fusion version on a remote cluster; use setup_local for local clusters.
     """
@@ -3304,13 +3223,13 @@ def fusion_demo(cluster, n=1, instance_type='m3.large'):
     """
     Setup a cluster with SolrCloud, ZooKeeper, and Fusion (API, UI, Connectors)
     """
-    fusionVers = _env(cluster, 'fusion_vers', defaultValue='2.4.2')
+    fusionVers = _env(cluster, 'fusion_vers', defaultValue='3.1.0')
     new_solrcloud(cluster,n=n,instance_type=instance_type,auto_confirm=True,purpose='Fusion demo',project='Fusion',customTags='{"CostCenter":"eng"}')
     deploy_config(cluster,'perf','cloud')
     fusion_setup(cluster,fusionVers)
     fusion_start(cluster,api=n)
 
-def setup_local(cluster,tip,numSolrNodes=1,solrVers='5.5.2',zkVers='3.4.6',fusionVers=None,overwriteExistingConfig=False):
+def setup_local(cluster,tip,numSolrNodes=1,solrVers='6.5.1',zkVers='3.4.6',fusionVers=None,overwriteExistingConfig=False):
     """
     Downloads Solr, ZooKeeper, and optionally Fusion and then builds a local cluster.
     """
