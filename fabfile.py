@@ -3557,16 +3557,21 @@ def _print_step_metrics(cluster, collection, usePipeline=False):
 
 
 def gc_log_analysis_api(cluster):
+
+    gcAnalyzerJarFile = './'+'lib/gc-log-analyzer-0.1-exe.jar'
+    if os.path.isfile(gcAnalyzerJarFile) is False:
+        _warn(gcAnalyzerJarFile+" not found, skipping GC log analysis")
+        return
+
     hosts = _lookup_hosts(cluster)
     _info("Starting gc log analysis")
     for host in hosts:
         with settings(host_string=host), hide('output', 'running'):
             _info('Host: ' + host)
-            gcjarupload = put('./'+'lib/gc-log-analyzer-0.1-exe.jar',_env(cluster, 'sstk_cloud_dir'))
+            gcjarupload = put(gcAnalyzerJarFile,_env(cluster, 'sstk_cloud_dir'))
             if gcjarupload.succeeded:
                 gclogfilename = run('ls fusion/var/log/api/ | grep gc | tail -1')
                 _info(run('java -jar ' + _env(cluster, 'sstk_cloud_dir') + '/gc-log-analyzer-0.1-exe.jar -log ' + 'fusion/var/log/api/' + gclogfilename + ' -javaVers 1.7' ))
-
     _info("Gc log analysis complete")
 
 def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
