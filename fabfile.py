@@ -2998,6 +2998,8 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     print('zkHost=%s, fusionZk=%s' % (zkHost, fusionZk))
 
     agentPropsTemplate = """
+group.default = api, connectors, ui
+
 # Some defaults across all processes
 #zk.connect={0}
 default.zk.connect={1}
