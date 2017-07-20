@@ -1559,7 +1559,27 @@ def new_ec2_instances(cluster,
     for key in tags:
         args["TagSpecifications"][0]["Tags"].append({"Key": key, "Value": str(tags[key])})
     if bdm:
-        args['BlockDeviceMappings'] = bdm
+        BlockDeviceMappings = []
+        for device_name, mapping in bdm.iteritems():
+            device = {'DeviceName': device_name, 'Ebs': dict()}
+            if mapping.ephemeral_name:
+                device['VirtualName'] = mapping.ephemeral_name
+            if mapping.no_device:
+                device['NoDevice'] = mapping.no_device
+            if mapping.snapshot_id:
+                device['Ebs']['SnapshotId'] = mapping.snapshot_id
+            if mapping.delete_on_termination:
+                device['Ebs']['DeleteOnTermination'] = mapping.delete_on_termination
+            if mapping.size:
+                device['Ebs']['VolumeSize'] = mapping.size
+            if mapping.volume_type:
+                device['Ebs']['VolumeType'] = mapping.volume_type
+            if mapping.iops:
+                device['Ebs']['Iops'] = mapping.iops
+            if mapping.encrypted:
+                device['Ebs']['Encrypted'] = mapping.encrypted
+            BlockDeviceMappings.append(device)
+        args['BlockDeviceMappings'] = BlockDeviceMappings
     if placement_group:
         args['Placement']['GroupName'] = placement_group
     _info('Launching '+str(num)+' EC2 instances with args ' + str(args))
