@@ -34,7 +34,7 @@ from distutils.version import StrictVersion
 CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
-AWS_HVM_AMI_ID = 'ami-c14576d7'
+AWS_HVM_AMI_ID = 'ami-b82871c3'
 AWS_AZ = 'us-east-1b'
 AWS_INSTANCE_TYPE = 'r3.large'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
@@ -52,7 +52,7 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_121'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_144'
 _config['solr_tip'] = '${user_home}/solr-6.6.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
