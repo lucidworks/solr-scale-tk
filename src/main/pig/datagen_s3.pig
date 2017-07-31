@@ -1,4 +1,4 @@
-REGISTER '$SSTK_JAR'
+REGISTER 's3://sstk-dev/solr-scale-tk-0.1-exe.jar'
 
 DEFINE GenKeys com.lucidworks.pig.GenKeys('$NUM_KEYS','5150','100');
 DEFINE SyntheticDoc com.lucidworks.pig.SyntheticDoc('$NUM_DOCS_PER_KEY','5150');

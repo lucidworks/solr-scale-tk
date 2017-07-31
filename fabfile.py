@@ -52,7 +52,7 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_144'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_121'
 _config['solr_tip'] = '${user_home}/solr-6.6.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.6'
 _config['zk_data_dir'] = zk_data_dir
@@ -2967,6 +2967,44 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
+def fusion_restart_spark(cluster,smasters=1):
+    hosts = _lookup_hosts(cluster)
+    fusionHome = _env(cluster, 'fusion_home')
+    fusionBin = fusionHome+'/bin'
+    fusionLogs = fusionHome+'/var/log'
+    numSparkMasterNodes = int(smasters)
+    if numSparkMasterNodes > len(hosts):
+        _fatal('Cannot start more than %d Spark master nodes!' % len(hosts))
+    if numSparkMasterNodes > 0:
+        _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
+        for host in hosts[0:numSparkMasterNodes]:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/spark-master stop || true')
+                _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+                time.sleep(2)
+                _info('Started Spark Master service on '+host)
+
+        _status('Starting Fusion Spark Worker service on %d nodes.' % len(hosts))
+        time.sleep(10) # give time for the master to start
+        for host in hosts:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/spark-worker stop || true')
+                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+                time.sleep(2)
+                _info('Started Spark-Worker service on '+host)
+    time.sleep(2)
+    fusion_spark_status(cluster)
+
+def fusion_spark_status(cluster):
+    hosts = _lookup_hosts(cluster)
+    fusionHome = _env(cluster, 'fusion_home')
+    fusionBin = fusionHome+'/bin'
+    for host in hosts:
+        with settings(host_string=host), hide('running'):
+            _status("Checking status of Spark services on: "+host)
+            run(fusionBin+'/spark-master status || true')
+            run(fusionBin+'/spark-worker status || true')
+
 def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,apiJavaMem=None):
     """
     Start Fusion services across the specified cluster.
@@ -3182,6 +3220,7 @@ def fusion_status(cluster):
     fusionHome = _env(cluster, 'fusion_home')
     for host in hosts:
         with settings(host_string=host):
+            _status("Checking Fusion status on: "+host)
             run(fusionHome+'/bin/fusion status all')
     cluster_status(cluster)
 
