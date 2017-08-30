@@ -4,7 +4,7 @@ from fabric.colors import green as _green, blue as _blue, red as _red, yellow as
 from fabric.contrib.files import append as _fab_append, exists as _fab_exists
 from fabric.contrib.console import confirm
 from StringIO import StringIO as _strio    
-import boto
+import boto, boto3
 from boto.s3.key import Key as _S3Key
 import boto.emr
 from boto.emr.step import InstallPigStep as _InstallPigStep
@@ -222,7 +222,7 @@ def _provider_api(cluster ='ec2'):
 
 # Polls until instances are running, up to a max wait
 def _poll_for_running_status(rsrv, maxWait=180):
-    _info('Waiting for ' + str(len(rsrv.instances)) + ' instances to start (will wait for a max of 3 minutes) ...')
+    _info('Waiting for ' + str(len(rsrv)) + ' instances to start (will wait for a max of 3 minutes) ...')
 
     startedAt = time.time()
     waitTime = 0
@@ -231,7 +231,7 @@ def _poll_for_running_status(rsrv, maxWait=180):
     allRunning = False
     while allRunning is False and waitTime < maxWait:
         allRunning = True
-        for inst in rsrv.instances:
+        for inst in rsrv:
             if inst.id in runningSet:
                 continue
 
@@ -1513,21 +1513,6 @@ def new_ec2_instances(cluster,
         if vpcSecurityGroupId is None:
             _fatal('Cannot determine security group ID for launching EC2 instances in a VPC! Please set the vpc_security_group_id property in your ~/.sstk file.')
 
-    _info('Launching '+str(num)+' EC2 instances in VPC subnet '+vpcSubnetId+' using the '+vpcSecurityGroupId+' security group in '+az + 'subnet: '+vpcSubnetId + ' key: ' + key)
-    rsrv = ec2.run_instances(ami,
-                         min_count=num,
-                         max_count=num,
-                         instance_type=instance_type,
-                         key_name=key,
-                         block_device_map=bdm,
-                         monitoring_enabled=True,
-                         placement=az,
-                         placement_group=placement_group,
-                         subnet_id = vpcSubnetId,
-                         security_group_ids=[vpcSecurityGroupId])
-    
-    time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
-    
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
@@ -1543,44 +1528,68 @@ def new_ec2_instances(cluster,
     if customTags is not None:
         customTagsJson = json.loads(customTags)
 
-    idx = 0
-    for inst in rsrv.instances:
-        try:
-            inst.add_tag("Name", cluster+'_'+str(idx))
-            inst.add_tag(CLUSTER_TAG, cluster)
-            inst.add_tag(USERNAME_TAG, username)
-            inst.add_tag('Owner', owner)
-            inst.add_tag('Description', description)
-            inst.add_tag('Purpose', purpose)
-            inst.add_tag('Project', project)
-            inst.add_tag(INSTANCE_STORES_TAG, numStores)
-            if customTagsJson is not None:
-                for tagName, tagValu in customTagsJson.iteritems():
-                    inst.add_tag(tagName, tagValu)
-                    #_info('Added custom tag: %s=%s' % (tagName, tagValu))
+    args = dict()
+    args['ImageId'] = ami
+    args['MinCount'] = num
+    args['MaxCount'] = num
+    args['InstanceType'] = instance_type
+    args['KeyName'] = key
+    args['Monitoring'] = {'Enabled': True}
+    args['Placement'] = {'AvailabilityZone': az}
+    args['SubnetId'] = vpcSubnetId
+    args['SecurityGroupIds'] = [vpcSecurityGroupId]
+    args['TagSpecifications'] = [{
+        'ResourceType': 'instance',
+        'Tags': []
+    }]
+    tags = {
+        'CostCenter': 'eng',
+        'Name': cluster,
+        CLUSTER_TAG: cluster,
+        USERNAME_TAG: username,
+        'Owner': owner,
+        'Description': description,
+        'Purpose': purpose,
+        'Project': project,
+        INSTANCE_STORES_TAG: numStores
+    }
+    if customTagsJson is not None:
+        for tagName, tagValue in customTagsJson.iteritems():
+            tags[tagName] = tagValue
+    for key in tags:
+        args["TagSpecifications"][0]["Tags"].append({"Key": key, "Value": str(tags[key])})
+    if bdm:
+        BlockDeviceMappings = []
+        for device_name, mapping in bdm.iteritems():
+            device = {'DeviceName': device_name, 'Ebs': dict()}
+            if mapping.ephemeral_name:
+                device['VirtualName'] = mapping.ephemeral_name
+            if mapping.no_device:
+                device['NoDevice'] = mapping.no_device
+            if mapping.snapshot_id:
+                device['Ebs']['SnapshotId'] = mapping.snapshot_id
+            if mapping.delete_on_termination:
+                device['Ebs']['DeleteOnTermination'] = mapping.delete_on_termination
+            if mapping.size:
+                device['Ebs']['VolumeSize'] = mapping.size
+            if mapping.volume_type:
+                device['Ebs']['VolumeType'] = mapping.volume_type
+            if mapping.iops:
+                device['Ebs']['Iops'] = mapping.iops
+            if mapping.encrypted:
+                device['Ebs']['Encrypted'] = mapping.encrypted
+            BlockDeviceMappings.append(device)
+        args['BlockDeviceMappings'] = BlockDeviceMappings
+    if placement_group:
+        args['Placement']['GroupName'] = placement_group
+    _info('Launching '+str(num)+' EC2 instances with args ' + str(args))
+    rsrv = boto3.resource('ec2', region_name=az[:-1]).create_instances(**args)
+    _info(rsrv)
 
-        except: # catch all exceptions
-            e = sys.exc_info()[0]
-            _error('Error when tagging instance %s due to: %s ... will retry in 5 seconds ...' % (inst.id, str(e)))
-            time.sleep(5)
-            inst.add_tag("Name", cluster+'_'+str(idx))
-            inst.add_tag(CLUSTER_TAG, cluster)
-            inst.add_tag(USERNAME_TAG, username)
-            inst.add_tag('Owner', owner)
-            inst.add_tag('Description', description)
-            inst.add_tag('Purpose', purpose)
-            inst.add_tag('Project', project)
-            inst.add_tag(INSTANCE_STORES_TAG, numStores)
-            if customTagsJson is not None:
-                for tagName, tagValu in customTagsJson.iteritems():
-                    inst.add_tag(tagName, tagValu)
-                    #_info('Added custom tag: %s=%s' % (tagName, tagValu))
-        idx += 1
+    time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
 
-
-    numRunning = _poll_for_running_status(rsrv, maxWait=int(maxWait))
-    if int(numRunning) != int(num):
-        _fatal('Only %s of %s instances are running for cluster %s! Check the AWS console to diagnose the issue.' % (str(numRunning), str(num), cluster))
+    for inst in rsrv:
+        inst.wait_until_running()
 
     time.sleep(5)
 
@@ -4137,6 +4146,7 @@ def tag_emr_instances(cluster,emrCluster,purpose,project,region='us-east-1',cust
                 inst.add_tag('Description', description)
                 inst.add_tag('Purpose', purpose)
                 inst.add_tag('Project', project)
+                inst.add_tag('CostCenter', 'eng')
                 if customTagsJson is not None:
                     for tagName, tagValu in customTagsJson.iteritems():
                         inst.add_tag(tagName, tagValu)
@@ -4150,6 +4160,7 @@ def tag_emr_instances(cluster,emrCluster,purpose,project,region='us-east-1',cust
                 inst.add_tag('Description', description)
                 inst.add_tag('Purpose', purpose)
                 inst.add_tag('Project', project)
+                inst.add_tag('CostCenter', 'eng')
                 if customTagsJson is not None:
                     for tagName, tagValu in customTagsJson.iteritems():
                         inst.add_tag(tagName, tagValu)
