@@ -17,8 +17,8 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <intProp name="LoopController.loops">-1</intProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">10</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+        <stringProp name="ThreadGroup.num_threads">8</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">2</stringProp>
         <longProp name="ThreadGroup.start_time">1394052886000</longProp>
         <longProp name="ThreadGroup.end_time">1394052886000</longProp>
         <boolProp name="ThreadGroup.scheduler">false</boolProp>
@@ -31,17 +31,17 @@
             <collectionProp name="Arguments.arguments">
               <elementProp name="ZK_HOST" elementType="Argument">
                 <stringProp name="Argument.name">ZK_HOST</stringProp>
-                <stringProp name="Argument.value">ec2-107-21-35-31.compute-1.amazonaws.com:2181/fucm</stringProp>
+                <stringProp name="Argument.value">ec2-34-196-176-70.compute-1.amazonaws.com:2181</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="COLLECTION" elementType="Argument">
                 <stringProp name="Argument.name">COLLECTION</stringProp>
-                <stringProp name="Argument.value">perf2x2</stringProp>
+                <stringProp name="Argument.value">alluxio4</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="RANDOM_SEED" elementType="Argument">
                 <stringProp name="Argument.name">RANDOM_SEED</stringProp>
-                <stringProp name="Argument.value">5152</stringProp>
+                <stringProp name="Argument.value">5150</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="SLOW_QUERY_THRESHOLD_MS" elementType="Argument">
@@ -56,7 +56,7 @@
               </elementProp>
               <elementProp name="MODE" elementType="Argument">
                 <stringProp name="Argument.name">MODE</stringProp>
-                <stringProp name="Argument.value">fusion</stringProp>
+                <stringProp name="Argument.value">solr</stringProp>
                 <stringProp name="Argument.metadata">=</stringProp>
               </elementProp>
               <elementProp name="FUSION_QUERY_ENDPOINTS" elementType="Argument">

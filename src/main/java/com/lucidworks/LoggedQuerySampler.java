@@ -16,9 +16,9 @@ import org.apache.jmeter.protocol.java.sampler.AbstractJavaSamplerClient;
 import org.apache.jmeter.protocol.java.sampler.JavaSamplerContext;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.impl.BinaryResponseParser;
 import org.apache.solr.client.solrj.impl.CloudSolrClient;
 import org.apache.solr.client.solrj.impl.HttpClientUtil;
-import org.apache.solr.client.solrj.impl.XMLResponseParser;
 import org.apache.solr.client.solrj.response.QueryResponse;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.cloud.ZkStateReader;
@@ -73,16 +73,16 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
   private static Set<String> queries = null;
   private static OutputStreamWriter slowQueryLogger = null;
 
-  protected List<String> servers;
-  protected String collection;
+  protected static List<String> servers;
+  protected static String collection;
   protected long slowQueryThresholdMs = 1500;
-  protected XMLResponseParser responseParser = new XMLResponseParser();
+  protected static BinaryResponseParser responseParser = new BinaryResponseParser();
 
   public SampleResult runTest(JavaSamplerContext context) {
     SampleResult result = new SampleResult();
     result.sampleStart();
 
-    log.info("Query test running in thread: " + Thread.currentThread().getName());
+    log.info("Query test running in thread: " + Thread.currentThread().getName()+"; instance: "+this.toString()+"; ref: "+refCounter.get());
 
     Random rand = new Random();
     List<String> randomizedQueries = new ArrayList<String>(queries.size());
@@ -449,6 +449,9 @@ public class LoggedQuerySampler extends AbstractJavaSamplerClient implements Ser
 
         if (line.indexOf(" ["+collection+"_") == -1)
           continue; // not this collection
+
+        if (line.indexOf(" hits=0 ") != -1)
+          continue; // no hits, bad query
 
         int pos = line.indexOf("params={");
         if (pos == -1)

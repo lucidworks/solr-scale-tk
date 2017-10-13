@@ -1267,7 +1267,7 @@ def attach_ebs(cluster,n=None,size=50,device='sdy',volume_type=None,iops=None):
     hosts = _cluster_hosts(ec2, cluster)
     if n is not None:
         onlyOne = []
-        onlyOne.push(hosts[int(n)])
+        onlyOne.append(hosts[int(n)])
         hosts = onlyOne
 
     for instanceHost in hosts:
@@ -1448,9 +1448,12 @@ def new_ec2_instances(cluster,
 
     # device mappings
     setupInstanceStores = True if skipStores is None else False
-    numInstanceStores = instanceStoresByType[instance_type]
+    numInstanceStores = instanceStoresByType.get(instance_type)
     if numInstanceStores is None:
-        _fatal('Must specify the number of instance stores for instance instance_type: ' % instance_type)
+        if setupInstanceStores:
+            _fatal('Must specify the number of instance stores for instance instance_type: ' % instance_type)
+        else:
+            numInstanceStores = 0
     
     numStores = int(numInstanceStores)
     if numStores > 4:
@@ -1513,6 +1516,21 @@ def new_ec2_instances(cluster,
         if vpcSecurityGroupId is None:
             _fatal('Cannot determine security group ID for launching EC2 instances in a VPC! Please set the vpc_security_group_id property in your ~/.sstk file.')
 
+    _info('Launching '+str(num)+' EC2 instances in VPC subnet '+vpcSubnetId+' using the '+vpcSecurityGroupId+' security group in '+az + ' subnet: '+vpcSubnetId + ' key: ' + key)
+    rsrv = ec2.run_instances(ami,
+                         min_count=num,
+                         max_count=num,
+                         instance_type=instance_type,
+                         key_name=key,
+                         block_device_map=bdm,
+                         monitoring_enabled=True,
+                         placement=az,
+                         placement_group=placement_group,
+                         subnet_id = vpcSubnetId,
+                         security_group_ids=[vpcSecurityGroupId])
+    
+    time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
+    
     # add a tag to each instance so that we can filter many instances by our cluster tag
 
     now = datetime.datetime.utcnow()
