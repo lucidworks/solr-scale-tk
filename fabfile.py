@@ -52,9 +52,9 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_144'
-_config['solr_tip'] = '${user_home}/solr-6.6.0'
-_config['zk_home'] = '${user_home}/zookeeper-3.4.6'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_161'
+_config['solr_tip'] = '${user_home}/solr-7.2.1'
+_config['zk_home'] = '${user_home}/zookeeper-3.4.10'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
 _config['SSTK_ENV'] = '${sstk_cloud_dir}/' + ENV_SCRIPT
@@ -64,8 +64,8 @@ _config['AWS_AZ'] = AWS_AZ
 _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
 _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
-_config['fusion_home'] = '${user_home}/fusion/3.1.2'
-_config['fusion_vers'] = '3.1.2'
+_config['fusion_home'] = '${user_home}/fusion/4.0.0'
+_config['fusion_vers'] = '4.0.0'
 _config['connector_memory_in_gb'] = '1'
 _config['owner'] = getpass.getuser()
 
@@ -1586,7 +1586,9 @@ def new_ec2_instances(cluster,
     if placement_group:
         args['Placement']['GroupName'] = placement_group
     _info('Launching '+str(num)+' EC2 instances with args ' + str(args))
-    rsrv = boto3.resource('ec2', region_name=az[:-1]).create_instances(**args)
+
+    region = az[:-1]
+    rsrv = boto3.resource('ec2', region_name=region).create_instances(**args)
     _info(rsrv)
 
     time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
@@ -3048,25 +3050,15 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     print('zkHost=%s, fusionZk=%s' % (zkHost, fusionZk))
 
     agentPropsTemplate = """
-group.default = api, connectors, ui
-
-# Some defaults across all processes
 #zk.connect={0}
 default.zk.connect={1}
 #solr.zk.connect={2}
 default.solrZk.connect={3}
-
-# garbage collection options can be "cms", "g1", "throughput" or "parallel", "serial" or "none"
+group.default = api, connectors-rpc, connectors-classic, admin-ui, proxy
+default.address = {5}
 default.gc = cms
-# enable garbage collection logs
 default.gcLog = true
-# number of seconds agent checks for a service to be up and ready before declaring failure
-default.startSecs = 180
-# supervisor's settings
-# set to "none" to disable supervisor
-default.supervision.type=standard
-default.supervision.startRetries=3
-default.supervision.pauseBeforeRestartSecs=3
+default.supervision.type = standard
 
 # Agent process
 agent.port = 8091
@@ -3074,17 +3066,24 @@ agent.port = 8091
 # API service
 api.port = 8765
 api.stopPort = 7765
-api.jvmOptions={4} -Xss256k -Djava.rmi.server.hostname={5} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true
+api.jvmOptions={4} -Xss256k -Djava.rmi.server.hostname={5} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true -Dhttp.maxConnections=1000
+api.startSecs=420
+
+# Connectors RPC service
+connectors-rpc.port = 8771
+connectors-rpc.pluginPortRangeStart = 8871
+connectors-rpc.pluginPortRangeEnd = 8971
+connectors-rpc.jvmOptions = -Xmx1g -Xss256k
 
 # Connectors service
-connectors.port = 8763
-connectors.stopPort = 7763
-connectors.jvmOptions=-Xmx{6}g -Xss256k
+connectors-classic.port = 8763
+connectors-classic.stopPort = 7763
+connectors-classic.jvmOptions = -Xmx{6}g -Xss256k -Dcom.lucidworks.connectors.pipelines.embedded=false
+connectors-classic.startSecs=420
 
 # Zookeeper
 zookeeper.port = 9983
-zookeeper.start = true
-zookeeper.jvmOptions=-Xmx256m
+zookeeper.jvmOptions = -Xmx256m
 
 # Solr
 solr.port = 8983
@@ -3095,18 +3094,58 @@ solr.jvmOptions = -Xmx2g -Xss256k
 spark-master.port = 8766
 spark-master.uiPort = 8767
 spark-master.jvmOptions = -Xmx512m
+spark-master.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
 
 # Spark worker
 spark-worker.port = 8769
 spark-worker.uiPort = 8770
 spark-worker.jvmOptions = -Xmx1g
-spark-worker.envVars={{"SPARK_SCALA_VERSION":"2.11", "SPARK_WORKER_CORES":"16"}}
+spark-worker.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
 
-# UI
-ui.port = 8764
-ui.stopPort = 7764
-ui.jvmOptions = -Xmx512m
-"""
+# Admin UI
+admin-ui.port = 8763
+admin-ui.stopPort = 7763
+admin-ui.jvmOptions = -Xmx512m
+admin-ui.startSecs=420
+
+# Proxy
+proxy.port = 8764
+proxy.stopPort = 7764
+proxy.jvmOptions = -Xmx512m
+# Make sure to enable ssl mode if you disable http access in jetty
+# see https://doc.lucidworks.com/fusion/latest/Installation_and_Configuration/Configuring-Fusion-for-SSL.html#enabling-ssl-in-the-fusion-ui
+# proxy.ssl=false
+
+# SQL engine
+sql.port = 8768
+sql.jvmOptions = -Xmx1g
+sql.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
+
+# Webapps Server
+webapps.port = 8780
+webapps.stopPort = 7780
+webapps.jvmOptions = -Xmx512m
+
+# you can limit this Webapps service instance to deploy only particular apps
+# webapps.appIds = app1, app2
+
+# register web applications for custom / selective routing
+webapps.routing_group=webapp
+
+
+# these define the default garbage collection options. You may define your own configurations as you wish: to define a
+# new GC option named "custom", for example, create a property named "gcOptions.custom" and set the value to whatever
+# you would like added to the JVM command line.
+gcOptions.cms = -XX:NewRatio=3 -XX:SurvivorRatio=4 -XX:TargetSurvivorRatio=90 -XX:MaxTenuringThreshold=8 -XX:+UseConcMarkSweepGC \
+  -XX:+UseParNewGC -XX:ConcGCThreads=4 -XX:ParallelGCThreads=4 -XX:+CMSScavengeBeforeRemark \
+  -XX:PretenureSizeThreshold=64m -XX:+UseCMSInitiatingOccupancyOnly -XX:CMSInitiatingOccupancyFraction=50 \
+  -XX:CMSMaxAbortablePrecleanTime=6000 -XX:+CMSParallelRemarkEnabled -XX:+ParallelRefProcEnabled
+gcOptions.cms.java7 = -XX:CMSFullGCsBeforeCompaction=1 -XX:CMSTriggerPermRatio=80
+gcOptions.g1 = -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=250 -XX:+AggressiveOpts -XX:InitiatingHeapOccupancyPercent=75
+gcOptions.throughput = -XX:+UseParallelGC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=250
+gcOptions.serial = -XX:+UseSerialGC
+gcOptions.none=    
+    """
 
     fusionConfSh = """
 #!/bin/bash
@@ -3125,13 +3164,10 @@ fi
     cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            fusionAgentProps = agentPropsTemplate.format(fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host, connMemory)
+            fusionAgentProps = agentPropsTemplate.format(fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host, connMemory, host)
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
-            run('rm '+cloudDir+'/fusion-conf.sh || true')
-            _fab_append(cloudDir+'/fusion-conf.sh', fusionConfSh)
-            run('sh '+cloudDir+'/fusion-conf.sh')
 
     # start fusion, ui, connectors
     numApiNodes = int(api)
@@ -3173,10 +3209,13 @@ fi
         _status('Starting Fusion UI service on %d nodes.' % numUINodes)
         for host in hosts[0:numUINodes]:
             with settings(host_string=host), hide('output', 'running'):
-                run(fusionBin+'/ui stop || true')
-                _runbg(fusionBin+'/ui restart', fusionLogs+'/ui/restart.out')
+                run(fusionBin+'/admin-ui stop || true')
+                _runbg(fusionBin+'/admin-ui restart', fusionLogs+'/admin-ui/restart.out')
                 time.sleep(5)
-                _info('Started Fusion UI service on '+host)
+                run(fusionBin+'/proxy stop || true')
+                _runbg(fusionBin+'/proxy restart', fusionLogs+'/proxy/restart.out')
+                time.sleep(5)
+                _info('Started Fusion AdminUI & Proxy services on '+host)
                 if fusionUIUrl is None:
                     fusionUIUrl = 'http://'+host+':8764'
 
