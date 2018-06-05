@@ -52,7 +52,7 @@ _config['provider'] = 'ec2'
 _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
-_config['solr_java_home'] = '${user_home}/jdk1.8.0_161'
+_config['solr_java_home'] = '${user_home}/jdk1.8.0_172'
 _config['solr_tip'] = '${user_home}/solr-7.2.1'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.10'
 _config['zk_data_dir'] = zk_data_dir
@@ -534,7 +534,7 @@ def _check_zk_health(n, hosts, maxWait=90):
     if zkHealthy:
         _info('ZooKeeper is healthy on %d hosts.' % len(zkNodeSet))
     else:
-        _warn('ZooKeeper health checks timed out after %d seconds! Verified %d of %d' % (maxWait, len(zkNodeSet), n))
+        _fatal('ZooKeeper health checks timed out after %d seconds! Verified %d of %d' % (maxWait, len(zkNodeSet), n))
 
 
 def _is_private_subnet(cluster):
@@ -656,7 +656,7 @@ def _zk_ensemble(cluster, hosts):
 
     _info('Started ZooKeeper on %d nodes ... checking status' % n)
     time.sleep(5)
-    _check_zk_health(n, hosts, 60)
+    _check_zk_health(n, hosts, 90)
 
     return zkHosts
 
@@ -907,6 +907,7 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
     is_private = _is_private_subnet(cluster)
     zkHost = _read_cloud_env(cluster)['ZK_HOST']
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
+    print(">> remoteSolrJavaHome="+remoteSolrJavaHome)
     solrJavaMemOpts = _read_cloud_env(cluster)['SOLR_JAVA_MEM']
     solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path)
     solrInShPath = remoteSolrDir+'/bin/solr.in.sh'
@@ -1712,16 +1713,6 @@ export SOLR_JAVA_MEM="%s"
     solrTip = _env(cluster, 'solr_tip')
     solrVersion = os.path.basename(solrTip).split("-")[1]
 
-    #Bootstrap ZK
-    if StrictVersion(solrVersion) >= StrictVersion("6.4.2"):
-        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
-            _info(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
-            run(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
-    else:
-        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
-            _info(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
-            run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
-
     for host in hosts:
         with settings(host_string=host), hide('output', 'running'):
             run('mkdir -p '+cloudDir+' || true')
@@ -1732,6 +1723,16 @@ export SOLR_JAVA_MEM="%s"
             run('chmod +x ' + sstkScript)
             run('rm -f '+solrInShPath)
             _fab_append(solrInShPath, solrInSh)
+
+    #Bootstrap ZK
+    if StrictVersion(solrVersion) >= StrictVersion("6.4.2"):
+        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+            _info(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
+            run(remoteSolrDir + '/bin/solr zk mkroot ' + cluster + ' -z ' + ','.join(zkHosts))
+    else:
+        with shell_env(JAVA_HOME=remoteSolrJavaHome), settings(host_string=hosts[0]), hide('output', 'running'):
+            _info(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
+            run(remoteSolrDir+'/server/scripts/cloud-scripts/zkcli.sh -zkhost '+zkHost+' -cmd bootstrap -solrhome '+remoteSolrDir+'/server/solr')
 
     metaHost = None
 
@@ -1936,7 +1937,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     """
 
     if zk is None:
-        zkHost = '*local*'
+        zkHost = '*NEW* %d instances' % int(zkn)
     else:
         cloud = _provider_api(cluster)
         zkHosts = _get_zk_hosts(cloud, zk)
@@ -1946,6 +1947,9 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
     if az is None:
         az = _env(cluster, 'AWS_AZ')
 
+    if ami is None:
+        ami = _env(cluster, 'AWS_HVM_AMI_ID')
+
     paramReport = '''
     *****
     Launching new SolrCloud cluster with the following parameters:
@@ -1953,7 +1957,7 @@ def new_solrcloud(cluster, n=1, zk=None, zkn=1, nodesPerHost=1, instance_type=No
         zkHost: %s
         instance_type: %s
         numInstances: %d
-        nodesPerHost: %d
+        Solr nodesPerHost: %d
         ami: %s
         az: %s
         placement_group: %s
@@ -2995,13 +2999,13 @@ def fusion_restart_spark(cluster,smasters=1):
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/spark-master stop || true')
                 _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-                time.sleep(2)
+                time.sleep(30)
                 _info('Started Spark Master service on '+host)
 
         _status('Starting Fusion Spark Worker service on %d nodes.' % len(hosts))
-        time.sleep(10) # give time for the master to start
         for host in hosts:
             with settings(host_string=host), hide('output', 'running'):
+                time.sleep(15) # give time for the master to start
                 run(fusionBin+'/spark-worker stop || true')
                 _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
                 time.sleep(2)
@@ -3050,12 +3054,10 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     print('zkHost=%s, fusionZk=%s' % (zkHost, fusionZk))
 
     agentPropsTemplate = """
-#zk.connect={0}
-default.zk.connect={1}
-#solr.zk.connect={2}
-default.solrZk.connect={3}
-group.default = api, connectors-rpc, connectors-classic, admin-ui, proxy
-default.address = {5}
+default.zk.connect={0}
+default.solrZk.connect={1}
+group.default = api, connectors-rpc, connectors-classic, proxy, admin-ui
+default.address = {3}
 default.gc = cms
 default.gcLog = true
 default.supervision.type = standard
@@ -3066,7 +3068,7 @@ agent.port = 8091
 # API service
 api.port = 8765
 api.stopPort = 7765
-api.jvmOptions={4} -Xss256k -Djava.rmi.server.hostname={5} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true -Dhttp.maxConnections=1000
+api.jvmOptions={2} -Xss256k -Djava.rmi.server.hostname={3} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true -Dhttp.maxConnections=1000
 api.startSecs=420
 
 # Connectors RPC service
@@ -3076,9 +3078,9 @@ connectors-rpc.pluginPortRangeEnd = 8971
 connectors-rpc.jvmOptions = -Xmx1g -Xss256k
 
 # Connectors service
-connectors-classic.port = 8763
-connectors-classic.stopPort = 7763
-connectors-classic.jvmOptions = -Xmx{6}g -Xss256k -Dcom.lucidworks.connectors.pipelines.embedded=false
+connectors-classic.port = 18763
+connectors-classic.stopPort = 17763
+connectors-classic.jvmOptions = -Xmx{4}g -Xss256k -Dcom.lucidworks.connectors.pipelines.embedded=false
 connectors-classic.startSecs=420
 
 # Zookeeper
@@ -3094,13 +3096,13 @@ solr.jvmOptions = -Xmx2g -Xss256k
 spark-master.port = 8766
 spark-master.uiPort = 8767
 spark-master.jvmOptions = -Xmx512m
-spark-master.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
+spark-master.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3}
 
 # Spark worker
 spark-worker.port = 8769
 spark-worker.uiPort = 8770
 spark-worker.jvmOptions = -Xmx1g
-spark-worker.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
+spark-worker.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3},SPARK_WORKER_CORES=12
 
 # Admin UI
 admin-ui.port = 8763
@@ -3119,7 +3121,7 @@ proxy.jvmOptions = -Xmx512m
 # SQL engine
 sql.port = 8768
 sql.jvmOptions = -Xmx1g
-sql.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={5},SPARK_LOCAL_IP={5}
+sql.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3}
 
 # Webapps Server
 webapps.port = 8780
@@ -3164,10 +3166,13 @@ fi
     cloudDir = _env(cluster, 'sstk_cloud_dir')
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
-            fusionAgentProps = agentPropsTemplate.format(fusionZk, fusionZk, zkHost, zkHost, apiJavaOpts, host, connMemory, host)
+            fusionAgentProps = agentPropsTemplate.format(fusionZk, zkHost, apiJavaOpts, host, connMemory)
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
+            run('rm '+cloudDir+'/fusion-conf.sh || true')
+            _fab_append(cloudDir+'/fusion-conf.sh', fusionConfSh)
+            run('sh '+cloudDir+'/fusion-conf.sh')
 
     # start fusion, ui, connectors
     numApiNodes = int(api)
@@ -3192,7 +3197,7 @@ fi
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/api stop || true')
                 _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
-                time.sleep(15)
+                time.sleep(60) # api is slow to start, esp. the first time ...
                 _info('Started Fusion API service on '+host)
 
     if numConnectorsNodes > 0:
@@ -3201,7 +3206,7 @@ fi
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/connectors stop || true')
                 _runbg(fusionBin+'/connectors restart', fusionLogs+'/connectors/restart.out')
-                time.sleep(5)
+                time.sleep(30)
                 _info('Started Connectors service on '+host)
 
     fusionUIUrl = None
@@ -3209,17 +3214,17 @@ fi
         _status('Starting Fusion UI service on %d nodes.' % numUINodes)
         for host in hosts[0:numUINodes]:
             with settings(host_string=host), hide('output', 'running'):
-                run(fusionBin+'/admin-ui stop || true')
-                _runbg(fusionBin+'/admin-ui restart', fusionLogs+'/admin-ui/restart.out')
-                time.sleep(5)
                 run(fusionBin+'/proxy stop || true')
                 _runbg(fusionBin+'/proxy restart', fusionLogs+'/proxy/restart.out')
+                time.sleep(10)
+                run(fusionBin+'/admin-ui stop || true')
+                _runbg(fusionBin+'/admin-ui restart', fusionLogs+'/admin-ui/restart.out')
                 time.sleep(5)
                 _info('Started Fusion AdminUI & Proxy services on '+host)
                 if fusionUIUrl is None:
                     fusionUIUrl = 'http://'+host+':8764'
 
-    apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[0], 180)
+    apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[0], 240)
     if apiIsRunning is False:
         _fatal('Fusion API not responding on '+hosts[0]+'! Consult the Fusion API log for errors.')
 
@@ -3231,13 +3236,13 @@ fi
         with settings(host_string=host), hide('output', 'running'):
             run(fusionBin+'/spark-master stop || true')
             _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-            time.sleep(2)
+            time.sleep(60)
             _info('Started Spark Master service on '+host)
 
     # start Spark Workers on all nodes where there will be an API ... unless master = 0
     if numSparkMasterNodes > 0:
         _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-        time.sleep(10) # give time for the master to start
+        time.sleep(15) # give time for the master to start
         for host in hosts:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/spark-worker stop || true')
@@ -4393,6 +4398,9 @@ def restart_spark(cluster):
     for host in hosts:
         with settings(host_string=host):
             run("cd {} && bin/spark-worker restart && bin/spark-worker status".format(fusionHome), shell=True, stderr=sys.stdout)
+            _info("Spark worker process restarted on {0} ... waiting 15 secs to let it do its thing ...".format(host))
+            time.sleep(15)
+
     with settings(host_string=hosts[0]):
         run("cd {} && bin/spark-master restart && bin/spark-master status".format(fusionHome), shell=True)
 
