@@ -4113,7 +4113,7 @@ def upload_remote_files(cluster, hosts, fileList, remoteDir):
     return remoteFilesToCopy
 
 
-def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAPSHOT', remoteVers='2.1.0'):
+def fusion_patch_jars(cluster, localFusionDir, jars, n=None, api=None, localVers='4.1.0-SNAPSHOT', remoteVers='4.1.0-SNAPSHOT'):
     """
     Replaces Fusion JAR files on remote servers with new ones built locally.
     This command helps you patch a running system with a quick fix w/o having
@@ -4184,9 +4184,6 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
                     host = hosts[h]
                     run('scp -o StrictHostKeyChecking=no -i %s/.ssh/%s %s %s@%s:%s' % (user_home, local_key_name, remoteJarFile, ssh_user, host, remoteJarDir))
 
-        _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
-        _status('Restarted API service on '+hosts[0]+' ... waiting up to 180 seconds to see it come back online.')
-
     # copy the staged jars from tmp dir to all places in fusion on the rest of the hosts in the cluster
     for h in range(1,len(hosts)):
         with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
@@ -4194,15 +4191,36 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, localVers='2.2-SNAP
                 pathToJar = '%s/%s' % (remoteJarDir, jarFileName)
                 replaceJarCmd = ('find %s -name "%s" -exec cp %s {} \;' % (fusionHome, jarFileName, pathToJar))
                 run(replaceJarCmd)
+
+    numApi = len(hosts) if api is None else int(api)
+    for h in range(0,len(hosts)):
+        with settings(host_string=hosts[h]), hide('output', 'running', 'warnings'):
+            run(fusionBin+'/spark-worker stop || true')
+            run(fusionBin+'/api stop || true')
+            cleanShadedJarCmd = ('cd %s && find . -name "spark-shaded*jar" -exec rm -f {} \;' % (fusionHome+"/var"))
+            run(cleanShadedJarCmd)
+
+            # restart the api service if needed
+            if h < numApi:
                 _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
                 _status('Restarted API service on '+hosts[h]+' ... waiting up to 180 seconds to see it come back online.')
+                apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[h], 180)
+                if apiIsRunning is False:
+                    _fatal('Fusion API not responding on '+hosts[h]+'! Consult the Fusion API log for errors.')
+                else:
+                    _info('Fusion API is running on '+hosts[h])
 
-    for h in range(0,len(hosts)):
-        apiIsRunning = _wait_to_see_fusion_api_up(cluster, hosts[h], 180)
-        if apiIsRunning is False:
-            _fatal('Fusion API not responding on '+hosts[h]+'! Consult the Fusion API log for errors.')
-        else:
-            _info('Fusion API is running on '+hosts[h])
+            # restart the spark-worker on each node
+            _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+            time.sleep(10)
+            _info('Started Spark-Worker service on '+hosts[h])
+
+    for host in hosts:
+        with settings(host_string=host), hide('running'):
+            jarReportCmd = 'find %s -name "%s" -exec ls -l {} \;' % (fusionHome, jarFileName)
+            run(jarReportCmd)
+            jarReportCmd = 'find %s -name "spark-shaded*jar" -exec ls -l {} \;' % (fusionHome+"/var")
+            run(jarReportCmd)
 
     _info('JARs uploaded and patched successfully.')
     
