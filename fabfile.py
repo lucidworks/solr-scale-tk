@@ -53,7 +53,7 @@ _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
 _config['solr_java_home'] = '${user_home}/jdk1.8.0_172'
-_config['solr_tip'] = '${user_home}/solr-7.2.1'
+_config['solr_tip'] = '${user_home}/solr-7.3.1'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.10'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -786,18 +786,18 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
             mx = '640m'
     elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r3.2xlarge':
         if numNodesPerHost == 1:
-            mx = '12g'
-        elif numNodesPerHost == 2:
             mx = '8g'
-        elif numNodesPerHost == 3:
+        elif numNodesPerHost == 2:
             mx = '6g'
-        elif numNodesPerHost == 4:
-            mx = '5g'
-        elif numNodesPerHost == 5:
+        elif numNodesPerHost == 3:
             mx = '4g'
+        elif numNodesPerHost == 4:
+            mx = '3g'
+        elif numNodesPerHost == 5:
+            mx = '3g'
         else:
             showWarn = True
-            mx = '3g'
+            mx = '2g'
     elif instance_type == 'i2.4xlarge' or instance_type == 'r3.4xlarge' or instance_type == 'r4.xlarge' or instance_type == 'r4.2xlarge':
         if numNodesPerHost <= 4:
             mx = '12g'
@@ -907,7 +907,6 @@ def _rolling_restart_solr(cloud, cluster, solrHostsAndPortsToRestart=None, wait=
     is_private = _is_private_subnet(cluster)
     zkHost = _read_cloud_env(cluster)['ZK_HOST']
     remoteSolrJavaHome = _env(cluster, 'solr_java_home')
-    print(">> remoteSolrJavaHome="+remoteSolrJavaHome)
     solrJavaMemOpts = _read_cloud_env(cluster)['SOLR_JAVA_MEM']
     solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path)
     solrInShPath = remoteSolrDir+'/bin/solr.in.sh'
@@ -2985,7 +2984,7 @@ def fusion_new_collection(cluster, name, rf=1, shards=1, conf='cloud'):
     zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
     _fusion_api(hosts[0], 'collections', 'POST', json)
 
-def fusion_restart_spark(cluster,smasters=1):
+def fusion_restart_spark(cluster,smasters=1,workers_only=False):
     hosts = _lookup_hosts(cluster)
     fusionHome = _env(cluster, 'fusion_home')
     fusionBin = fusionHome+'/bin'
@@ -2993,8 +2992,9 @@ def fusion_restart_spark(cluster,smasters=1):
     numSparkMasterNodes = int(smasters)
     if numSparkMasterNodes > len(hosts):
         _fatal('Cannot start more than %d Spark master nodes!' % len(hosts))
-    if numSparkMasterNodes > 0:
-        _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
+    workersOnly = bool(workers_only)
+    if numSparkMasterNodes > 0 and workersOnly is False:
+        _status('Restarting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
         for host in hosts[0:numSparkMasterNodes]:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/spark-master stop || true')
@@ -3002,14 +3002,13 @@ def fusion_restart_spark(cluster,smasters=1):
                 time.sleep(30)
                 _info('Started Spark Master service on '+host)
 
-        _status('Starting Fusion Spark Worker service on %d nodes.' % len(hosts))
-        for host in hosts:
-            with settings(host_string=host), hide('output', 'running'):
-                time.sleep(15) # give time for the master to start
-                run(fusionBin+'/spark-worker stop || true')
-                _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-                time.sleep(2)
-                _info('Started Spark-Worker service on '+host)
+    _status('Restarting Fusion Spark Worker service on %d nodes.' % len(hosts))
+    for host in hosts:
+        with settings(host_string=host), hide('output', 'running'):
+            run(fusionBin+'/spark-worker stop || true')
+            _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
+            time.sleep(10)
+            _info('Started Spark-Worker service on '+host)
     time.sleep(2)
     fusion_spark_status(cluster)
 
@@ -3056,11 +3055,13 @@ def fusion_start(cluster,api=None,ui=1,connectors=1,smasters=1,yjp_path=None,api
     agentPropsTemplate = """
 default.zk.connect={0}
 default.solrZk.connect={1}
-group.default = api, connectors-rpc, connectors-classic, proxy, admin-ui
+group.default = api, connectors-rpc, connectors-classic, proxy, webapps, admin-ui, log-shipper
 default.address = {3}
 default.gc = cms
 default.gcLog = true
 default.supervision.type = standard
+default.timezone=UTC
+default.startSecs=360
 
 # Agent process
 agent.port = 8091
@@ -3134,6 +3135,40 @@ webapps.jvmOptions = -Xmx512m
 # register web applications for custom / selective routing
 webapps.routing_group=webapp
 
+# Log Shipper
+
+# Uncomment and change this address if you want to index log messages
+# into another externally manageable cluster
+# log-shipper.solrZk.connect = localhost:2181/solr-zk-namespace
+
+log-shipper.address=127.0.0.1
+
+# Change collection name to index log messages to any custom Solr collection
+# Make sure that this collection exists
+log-shipper.solrCollection = system_logs
+
+# Alternatively if you want to send logs to Solr HTTP endpoint without Zk access
+# specify Solr http address instead
+# log-shipper.solrHttp = http://localhost:8983/solr
+
+# You can ship Fusion logs of three different types:
+# 1. java - java logs
+# 2. http - HTTP access logs from web servers
+# 3. gc - garbage collection logs
+log-shipper.logs.proxy = java, http
+# log-shipper.logs.zookeeper = java
+log-shipper.logs.api = java
+log-shipper.logs.connectors = java
+log-shipper.logs.admin-ui = java
+log-shipper.logs.webapps = java
+log-shipper.logs.spark-master = java
+log-shipper.logs.spark-worker = java
+log-shipper.logs.agent = java
+# DO NOT ship Solr logs unless you enabled shipping to external Solr cluster (see log-shipper.solrZk.connect above)
+# log-shipper.logs.solr = java, http
+
+log-shipper.jvmOptions = -Xms256m -Xmx256m
+log-shipper.supervision.type = none
 
 # these define the default garbage collection options. You may define your own configurations as you wish: to define a
 # new GC option named "custom", for example, create a property named "gcOptions.custom" and set the value to whatever
@@ -3197,7 +3232,7 @@ fi
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/api stop || true')
                 _runbg(fusionBin+'/api restart', fusionLogs+'/api/restart.out')
-                time.sleep(60) # api is slow to start, esp. the first time ...
+                time.sleep(90) # api is slow to start, esp. the first time ...
                 _info('Started Fusion API service on '+host)
 
     if numConnectorsNodes > 0:
@@ -3217,10 +3252,13 @@ fi
                 run(fusionBin+'/proxy stop || true')
                 _runbg(fusionBin+'/proxy restart', fusionLogs+'/proxy/restart.out')
                 time.sleep(10)
+                run(fusionBin+'/webapps stop || true')
+                _runbg(fusionBin+'/webapps restart', fusionLogs+'/webapps/restart.out')
+                time.sleep(5)
                 run(fusionBin+'/admin-ui stop || true')
                 _runbg(fusionBin+'/admin-ui restart', fusionLogs+'/admin-ui/restart.out')
                 time.sleep(5)
-                _info('Started Fusion AdminUI & Proxy services on '+host)
+                _info('Started Fusion Admin UI, Webapps, & Proxy services on '+host)
                 if fusionUIUrl is None:
                     fusionUIUrl = 'http://'+host+':8764'
 
@@ -3231,24 +3269,30 @@ fi
     if fusionUIUrl is not None:
         _info('Fusion is running, please go to: '+fusionUIUrl)
 
-    _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
-    for host in hosts[0:numSparkMasterNodes]:
-        with settings(host_string=host), hide('output', 'running'):
-            run(fusionBin+'/spark-master stop || true')
-            _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
-            time.sleep(60)
-            _info('Started Spark Master service on '+host)
-
-    # start Spark Workers on all nodes where there will be an API ... unless master = 0
     if numSparkMasterNodes > 0:
-        _status('Starting Fusion Spark Worker service on %d nodes.' % numApiNodes)
-        time.sleep(15) # give time for the master to start
+        _status('Starting Fusion Spark Master service on %d nodes.' % numSparkMasterNodes)
+        for host in hosts[0:numSparkMasterNodes]:
+            with settings(host_string=host), hide('output', 'running'):
+                run(fusionBin+'/spark-master stop || true')
+                _runbg(fusionBin+'/spark-master restart', fusionLogs+'/spark-master/restart.out')
+                time.sleep(90)
+                _info('Started Spark Master service on '+host)
+        # start Spark Workers on all nodes where there will be an API ... unless master = 0
+        _status('Starting Fusion Spark Worker service on %d nodes.' % len(hosts))
         for host in hosts:
             with settings(host_string=host), hide('output', 'running'):
                 run(fusionBin+'/spark-worker stop || true')
                 _runbg(fusionBin+'/spark-worker restart', fusionLogs+'/spark-worker/restart.out')
-                time.sleep(2)
+                time.sleep(10)
                 _info('Started Spark-Worker service on '+host)
+
+    _status('Starting Fusion Log Shipper service on ALL nodes.')
+    for host in hosts:
+        with settings(host_string=host), hide('output', 'running'):
+            run(fusionBin+'/log-shipper stop || true')
+            _runbg(fusionBin+'/log-shipper restart', fusionLogs+'/log-shipper/restart.out')
+            time.sleep(10)
+            _info('Started Fusion Log Shipper service on '+host)
 
 
 def fusion_stop(cluster):
@@ -4390,19 +4434,6 @@ def stop_fusion(cluster):
     for host in hosts:
         with settings(host_string=host):
             run("cd {} && bin/fusion stop all".format(fusionHome), shell=True, stderr=sys.stdout)
-
-def restart_spark(cluster):
-    hosts = _lookup_hosts(cluster)
-    fusionHome = _env(cluster, 'fusion_home')
-
-    for host in hosts:
-        with settings(host_string=host):
-            run("cd {} && bin/spark-worker restart && bin/spark-worker status".format(fusionHome), shell=True, stderr=sys.stdout)
-            _info("Spark worker process restarted on {0} ... waiting 15 secs to let it do its thing ...".format(host))
-            time.sleep(15)
-
-    with settings(host_string=hosts[0]):
-        run("cd {} && bin/spark-master restart && bin/spark-master status".format(fusionHome), shell=True)
 
 def setup_spark_jdbc_jar(cluster,localJar):
     jarFile = os.path.expanduser(localJar)
