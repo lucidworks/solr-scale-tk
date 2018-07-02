@@ -12,25 +12,30 @@ Please visit the Google Groups forum - https://groups.google.com/forum/#!forum/s
 Setup
 ========
 
-Make sure you're running Python 2.7 and have installed dateutil, Fabric and boto dependencies. 
+Make sure you have Python 2.7 installed. 
 
-On the Mac, you can do:
+Solr Scale Toolkit depends on a few Python libraries. You don't need to know Python in order to use it, but you do need to interact with Python tools a bit in order to set it up.
+It's best to use a virtual environment to keep SSTK's dependencies contained. If you have `virtualenv` installed, you can do:
 
 ```
-sudo easy_install python-dateutil
-sudo easy_install fabric
-sudo easy_install boto
+virtualenv --python=python2.7 sstk
+source sstk/bin/activate 
+
+```
+This will create a virtual environment called "sstk" in the current directory and then activate it. You can put it wherever you'd like, of course. 
+
+If you don't have `virtualenv` installed, you may be able to install it using `pip install virtualenv`, or see documentation specific to your platform.
+
+Once you have a virtualenv activated, install the dependencies:
+```
+pip install -r requirements.txt
 ```
 
-For more information about fabric, see: http://docs.fabfile.org/en/1.8/
-
-Clone the pysolr project from github and set it up as well:
+Before you use SSTK every time, you'll want to remember to activate the virtualenv again in order to have the dependencies in scope:
 ```
-git clone https://github.com/toastdriven/pysolr.git
-cd pysolr
-sudo python setup.py install
+source sstk/bin/activate
 ```
-Note, you do not need to know any Python in order to use this framework.
+The rest of the setup only needs to be done once.
 
 Local Setup
 ========
