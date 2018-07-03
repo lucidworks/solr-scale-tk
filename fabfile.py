@@ -1258,6 +1258,42 @@ def _defaultvpc_exists(region='us-east-1'):
     _status("Default VPC exists:" + str(ret))
     return ret
 
+def _get_collection_state(cluster,collection):
+    cloud = _provider_api(cluster)
+    hosts = _cluster_hosts(cloud, cluster)
+    zkhost = _read_cloud_env(cluster)["ZK_HOST"]
+    fusionHome = _env(cluster, 'fusion_home')
+    collection_state_znode_path = "/collections/{}/state.json".format(collection)
+    output_path = "{}_state.json".format(collection)
+    script_command = "{}/scripts/zkImportExport.sh -z {} -cmd export -path {} -e utf-8 -f {}"\
+        .format(fusionHome, zkhost, collection_state_znode_path, output_path)
+    state = None
+    with settings(host_string=hosts[0]), hide('output', 'running'):
+        # _info("Getting collection state using command {} on host {}".format(script_command, hosts[0]))
+        run("rm -rf {}".format(output_path))
+        run(script_command)
+        output = run("cat {}".format(output_path))
+        out_json = json.loads(output)
+        if "response" in out_json:
+            if "data" in out_json["response"]:
+                state = json.loads(out_json["response"]["data"])
+        if state is None:
+            _fatal("Failed to get Solr state from import export script. Output: " + out_json)
+    if state:
+        shards_state = state[collection]["shards"]
+        host_shard_mapping = {}
+        for shard in shards_state:
+            replicas = shards_state[shard]["replicas"]
+            for core in replicas:
+                core_status = replicas[core]
+                if "leader" in core_status and core_status["leader"] == "true":
+                    node_name = core_status["node_name"][:-10]
+                    leader_state = {"node": node_name, "core": core_status["core"]}
+                    host_shard_mapping[shard] = leader_state
+        return host_shard_mapping
+    else:
+        _fatal("Failed to get Solr state from import export script using command '" + script_command + "'")
+
 def attach_ebs(cluster,n=None,size=50,device='sdy',volume_type=None,iops=None):
     """
     Attaches a new EBS volume to an instance in an existing cluster.
@@ -2280,381 +2316,93 @@ def deploy_config(cluster,localConfigDir,configName):
         _info('Uploaded '+localConfigDir+' to '+remoteDir)
         run(sstkScript + ' upconfig ' + configName)
 
-def backup_to_s3(cluster,collection,bucket='solr-scale-tk',dry_run=0,ebs=None):
+
+def backup_to_s3(cluster,collection,root_bucket='sstk-dev',boto_location="~/.boto",bucket_name=None,region="us-east-1d"):
     """
-    Backup an existing collection to S3 using the replication handler's snapshot support.
-    Take a snapshot of each shard leader's index, tar up the files, and ship to S3.
-    
-    Result is a directory under the s3://solr-scale-tk/ bucket containing a tar file per shard
-    e.g. for a collection named 'cloud1' with 4 shards running in a cluster named 'foo', 
-    you will have:
-    
-    s3://bucket/foo_cloud1/
-      -> shard1/snapshot
-      -> shard2/snapshot
-      -> shard3/snapshot
-      -> shard4/snapshot
-    
+    Backup a collection data into S3. We default to "sstk-dev/solr-backups/{cluster_name}_{collection_name}"
     """
-    # Verify the S3 bucket is usable
-    pfx = cluster+'_'+collection+'/'
-    if ebs is None:
-        _status('Setting up S3 bucket: %s/%s' % (bucket,pfx))
-        s3conn = boto.connect_s3()
-        rootBucket = s3conn.get_bucket(bucket)    
-        for key in rootBucket.list():
-            if key.name.startswith(pfx):
-                key.delete()
-    
-    dryRun = str(dry_run) == '1'
-    if dryRun:
-        _warn('Doing a dry-run only.')
+    backup_folder = "solr-backups"
+    state = _get_collection_state(cluster, collection)
+    _info("State: " + json.dumps(state))
 
-    cloud = _provider_api(cluster)
-    backupDirOnRemoteHost = '../backups/'+collection
-    hosts = _cluster_hosts(cloud, cluster)
-    numNodes = _num_solr_nodes_per_host(cluster)
-
-    remoteSolrDir = _env(cluster, 'solr_tip')
-
-    for host in hosts:
-        with settings(host_string=host), hide('output', 'running', 'warnings'):
-            for n in range(0,numNodes):                
-                solrPort = str(84+n)
-                backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
-                cmd = 'rm -rf %s; mkdir -p %s' % (backupDir, backupDir)
-                if dryRun is False:
-                    run(cmd)
-                else:
-                    _info('run( '+cmd+' )')
-            
-    # start the backup
-    zkHost = _read_cloud_env(cluster)['ZK_HOST'] # get the zkHost from the env on the server
-    cmd = './tools.sh backup -backupDir %s -collection %s -zkHost %s' % (backupDirOnRemoteHost, collection, zkHost)    
-    if dryRun is False:
-        local(cmd)
-        pass
+    collection_backup_folder = bucket_name if bucket_name else "{}_{}".format(cluster, collection)
+    s3conn = boto.connect_s3()
+    s3_root_bucket = s3conn.get_bucket(root_bucket)
+    backup_path = "{}/{}/".format(backup_folder, collection_backup_folder)
+    base_remote_path = "{}/{}".format(root_bucket, backup_path)
+    remote_s3_path = "s3://{}".format(base_remote_path)
+    key = s3_root_bucket.get_key(backup_path)
+    if key is None:
+        s3_root_bucket.new_key(backup_path).set_contents_from_string("")
+        _info("Created new object at path " + backup_path)
     else:
-        _info('local( '+cmd+' )')
-    
-    if ebs is None:
-        # S3 approach
-        _status('Preparing to backup to S3 ...')
-        for h in range(0,len(hosts)):
-            host = hosts[h]
-            with settings(host_string=host), hide('output', 'running', 'warnings'):  
-                for n in range(0,numNodes):                
-                    solrPort = str(84+n)
-                    backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
-                    tars2s3 = '#!/bin/bash\n'
-                    tars2s3 += 'cd '+backupDir+';'
-                    tars2s3 += 'find . -name "shard*" -type d -exec s3cmd --progress --recursive put {} s3://solr-scale-tk/%s \;\n' % pfx
-                    run('rm -f '+backupDir+'/s3put.sh')
-                    _fab_append(backupDir+'/s3put.sh', tars2s3)
-                    if dryRun is False:
-                        if ebs is not None:
-                            put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-                            run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))                        
-                        run('nohup sh '+backupDir+'/s3put.sh > '+backupDir+'/s3put.out 2>&1 &', pty=False)
-                    else:                    
-                        _info('run( '+tars2s3+' )')
-    else:
-        # EBS doesn't like a bunch of scp's running concurrently?
-        _status('Preparing to backup to EBS volume '+ebs+'/'+pfx+' on '+hosts[0]+' ...')
-        scriptName = 'scp_to_ebs'
-        for h in range(0,len(hosts)):
-            host = hosts[h]
-            with settings(host_string=host), hide('output', 'running', 'warnings'):
-                put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-                run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))                        
+        # Backup folder already exists, fail and ask the user to delete. We don't want to delete any data on S3 with fab
+        _fatal("Target path " + base_remote_path + " already exists. Please delete the folder to make a new backup")
 
-                if h == 0 and ebs is not None:
-                    sudo('mkdir -p '+ebs+'/'+pfx+' && chown -R '+ssh_user+': '+ebs+'/'+pfx)
-                    
-                scpToEbsSh = '#!/bin/bash\n'
-                
-                for n in range(0,numNodes):                
-                    solrPort = str(84+n)
-                    backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
-                    scpToEbsSh += 'cd '+backupDir+';'
-                    scpToEbsSh += 'find . -name "shard*" -type d -exec scp -o StrictHostKeyChecking=no -r -i %s {} ec2-user@%s:%s/%s \;\n' % (_env(cluster,'ssh_keyfile_path_on_local'), hosts[0], ebs, pfx)
-                    
-                backupScript = backupDir+'/'+scriptName+'.sh'
-                run('rm -f '+backupScript)                
-                _fab_append(backupScript, scpToEbsSh)
-                _status('Running backup script on '+host+' ... be patient, this can take a while depending on your index size ...')
-                if dryRun is False:
-                    run('sh '+backupDir+'/'+scriptName+'.sh')
-                    _info('Backup script finished on '+host)
-                else:                    
-                    _info('run( '+scpToEbsSh+' )')
-        
-        
-    done = 0
-    while done < len(hosts):
-        done = 0 # reset the counter since we check all nodes each loop
-        if dryRun is False:
-            _status('sleeping for 30 seconds before checking status')
-            time.sleep(30)
-        for host in hosts:
-            with settings(host_string=host), hide('output', 'running', 'warnings'):
-                pid = run('ps waux | grep s3put | grep -v grep | grep '+collection+' | awk \'{print $2}\' | sort -r')
-                if len(pid.strip()) == 0:
-                    done += 1
-                    _status('upload to S3 done on '+host)
-                else:
-                    _status('upload to S3 still running on '+host+', pid(s): '+pid)
-    _info('upload to S3 seems to be done on '+str(len(hosts))+' hosts')
-    
-    # clean-up backup files to free disk
-    for host in hosts:
-        with settings(host_string=host):
-            for n in range(0,numNodes):                
-                solrPort = str(84+n)
-                backupDir = '%s/cloud%s/solr/backups/%s' % (remoteSolrDir, solrPort, collection)
-                cmd = 'rm -rf %s' % backupDir
-                if dryRun is False:
-                    run(cmd)
-                else:
-                    _info('run( '+cmd+' )')
-    
-    
+    # Create paths for each shard backup
+    for shard_name in state:
+        shard_path = "{}{}/".format(backup_path, shard_name)
+        s3_root_bucket.new_key(shard_path).set_contents_from_string("")
+        _info("Created new shard key at path {}".format(shard_path))
 
-def restore_backup(cluster,backup_name,collection,bucket='solr-scale-tk',alreadyDownloaded=0,ebsVol=None,ebsMount='/ebs0'):
+    remoteSolrHome = _env(cluster, 'solr_tip')
+    for shard_name in state:
+        host = state[shard_name]["node"]
+        core_name = state[shard_name]["core"]
+        _info("Backing up shard {} on host {}".format(shard_name, host))
+        with settings(host_string=host), hide('output', 'running'):
+            put(boto_location, "~/.boto")
+            data_dir = "{}/cloud84/solr/{}/data".format(remoteSolrHome, core_name)
+            remote_s3_path_to_upload = "{}{}/".format(remote_s3_path, shard_name)
+            # Tar up the index directory and upload to S3
+            tar_file = "snapshot_{}.tar.gz".format(shard_name)
+            tar_file_path = "/vol0/{}".format(tar_file)
+            tar_command = "tar czf {} index".format(tar_file_path)
+            with cd(data_dir):
+                run(tar_command)
+            aws_s3_command = "aws s3 cp {} {}".format(tar_file, remote_s3_path_to_upload, region)
+            _info("Running aws command '" + aws_s3_command + "'")
+            with cd("/vol0"):
+                run(aws_s3_command)
+                run("rm -rf {}".format(tar_file))
+
+def restore_backup(cluster,source,target,root_bucket='sstk-dev',boto_location="~/.boto",bucket_name=None,region="us-east-1d"):
     """
     Restores an index from backup into an existing collection with the same number of shards
     """
-    cloud = _provider_api(cluster)
-    hosts = _cluster_hosts(cloud, cluster)
-    
-    needsDownload = True if int(alreadyDownloaded) == 0 else False
-    
-    ebsHost = None
-    backupOnEbs = None
-    useEbsVol = False
-    
-    # EBS volume may be mounted on this host already
-    if ebsVol is None and ebsMount is not None:
-        # check if ebsMount exists
-        with settings(host_string=hosts[0]):
-            backupOnEbs = ebsMount+'/'+backup_name
-            if _fab_exists(backupOnEbs):
-                ebsHost = hosts[0]
-                useEbsVol = True
-                needsDownload = False
-                _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
-    
-    # may need to mount the EBS volume
-    if ebsVol is not None and useEbsVol is False:
-        # find the instance ID of the first host
-        instId = None
-        for rsrv in cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster}):
-            for inst in rsrv.instances:
-                if inst.public_dns_name == hosts[0] or inst.private_ip_address == hosts[0]:
-                    instId = inst.id
-        
-        if instId is None:
-            _fatal('Could not determine the instance ID for '+hosts[0])
-        
-        with settings(host_string=hosts[0]):
-            cloud.attach_volume(ebsVol, instId, '/dev/sdf')
-            time.sleep(10)
-            sudo('lsblk')
-            sudo('mkdir -p ' + ebsMount)
-            sudo('mount /dev/xvdf ' + ebsMount)
-            sudo('chown -R %s: %s' % (ssh_user,ebsMount))
-            run('df -h')            
-            backupOnEbs = ebsMount+'/'+backup_name
-            if _fab_exists(backupOnEbs):
-                ebsHost = hosts[0]
-                needsDownload = False
-                useEbsVol = True
-                _info('Restoring from EBS backup %s mounted on %s' % (backupOnEbs, ebsHost))
-            else:
-                _fatal('EBS backup '+backupOnEbs+' not found on '+hosts[0])
-    
-    
-    # download from s3 to one of the nodes
-    # use the meta file to determine shard locations
-    backup = None
-    if useEbsVol is False and bucket is not None:
-        s3conn = boto.connect_s3()
-        rootBucket = s3conn.get_bucket(bucket)
-        backup = '%s/%s' % (bucket, backup_name)
-        pfx = backup_name+'/'
-        _status('Validating backup at s3://%s' % backup)
-        foundIt = False
-        for key in rootBucket.list():
-            if key.name.startswith(pfx):
-                foundIt = True
-                break
-        if foundIt is False:
-            _fatal(backup+' not found in S3!')
-            
-    # keeps track of which hosts have shard data we're restoring
-    hostShardMap = {}
+    backup_folder = "solr-backups"
+    state = _get_collection_state(cluster, target)
+    _info("State: " + json.dumps(state))
 
-    remoteSolrDir = _env(cluster, 'solr_tip')
-        
-    # collect the replica information for each shard for the collection we're restoring data into
-    shardDirs = {}
+    collection_backup_folder = bucket_name if bucket_name else "{}_{}".format(cluster, source)
+    s3conn = boto.connect_s3()
+    s3_root_bucket = s3conn.get_bucket(root_bucket)
+    backup_path = "{}/{}/".format(backup_folder, collection_backup_folder)
+    base_remote_path = "{}/{}".format(root_bucket, backup_path)
+    if s3_root_bucket.get_key(backup_path) is None:
+        _fatal("Backup folder on S3 {} does not exist".format(base_remote_path))
 
-    java_home = _env(cluster, 'solr_java_home')
+    for shard_name in state:
+        shard_path = "{0}{1}/snapshot_{1}.tar.gz".format(backup_path, shard_name)
+        if s3_root_bucket.get_key(shard_path) is None:
+            _fatal("Backup folder does not exist for {}".format(shard_name))
 
-    with shell_env(JAVA_HOME=java_home), settings(host_string=hosts[0]), hide('output','running'):
-        run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /clusterstate.json /tmp/clusterstate.json' % remoteSolrDir)
-        get('/tmp/clusterstate.json', './clusterstate.json')    
-        # parse the clusterstate.json to get the shard leader node assignments
-        _status('Fetching /clusterstate.json to get shard leader node assignments for '+collection)
-        clusterStateFile = open('./clusterstate.json')    
-        clusterState = json.load(clusterStateFile)
-        clusterStateFile.close()                       
-        if clusterState.has_key(collection) is False:
-            # assume an external collection
-            _warn('Collection '+collection+' not found in /clusterstate.json, looking for external state ...')
-            run('source ~/cloud/'+ENV_SCRIPT+'; cd %s/cloud84/scripts/cloud-scripts; ./zkcli.sh -zkhost $ZK_HOST -cmd getfile /collections/%s/state /tmp/state.json' % (remoteSolrDir, collection))
-            get('/tmp/state.json', './state.json')
-            clusterStateFile = open('./state.json')
-            clusterState = json.load(clusterStateFile)   
-            clusterStateFile.close()    
-            if clusterState.has_key(collection) is False:
-                _fatal('Cannot find state information for '+collection+' in ZooKeeper!')
-             
-    collState = clusterState[collection]
-    shards = collState['shards']
-    for shard in shards.keys():
-        shardDirs[shard] = []
-        replicas = shards[shard]['replicas']
-        for replica in replicas.keys():
-            node_name = replicas[replica]['node_name']
-            if node_name.endswith('_solr'):
-                node_name = node_name[0:len(node_name)-5]
-            hostAndPort = node_name.split(':') 
-            info = {}
-            info['leader'] = replicas[replica].has_key('leader')               
-            info['host'] = hostAndPort[0]
-            info['port'] = hostAndPort[1][2:]
-            info['core'] = replicas[replica]['core']
-            shardDirs[shard].append(info)
-            
-    _status('Found shard replica host assignments:')
-    print(json.dumps(shardDirs, indent=2))
+    remoteSolrHome = _env(cluster, 'solr_tip')
+    for shard_name in state:
+        shard_s3_path = "s3://{0}{1}/snapshot_{1}.tar.gz".format(base_remote_path, shard_name)
+        host = state[shard_name]["node"]
+        core_name = state[shard_name]["core"]
+        _info("Restoring {} on host {} from {}".format(shard_name, host, shard_s3_path))
+        with settings(host_string=host), hide('output', 'running'):
+            put(boto_location, "~/.boto")
+            data_dir = "{}/cloud84/solr/{}/data".format(remoteSolrHome, core_name)
+            aws_command = "aws s3 cp {} /vol0/ ".format(shard_s3_path)
+            tar_command = "tar xzf /vol0/snapshot_{}.tar.gz".format(shard_name)
+            run(aws_command)
+            with cd(data_dir):
+                run(tar_command)
+            run("rm -rf /vol0/snapshot_{}.tar.gz".format(shard_name))
 
-    # clean-up restore dir on all hosts to prepare for download
-    if ebsHost is None:
-        for host in hosts:    
-            with settings(host_string=host): #, hide('output'):
-                if needsDownload:
-                    sudo('rm -rf /vol0/restore/%s' % backup_name) # delete if we're downloading new
-                sudo('mkdir -p /vol0/restore/%s; chown -R %s: /vol0/restore/%s' % (backup_name, ssh_user, backup_name))
-
-    # for each shard, download the shardN.tar file from S3 on to the leader host
-    if needsDownload:
-        _info('Setting up to download index from s3://'+backup)
-        for shard in shardDirs.keys():
-            for replica in shardDirs[shard]:
-                if replica['leader']:
-                    host = replica['host']
-                    if hostShardMap.has_key(host) is False:
-                        hostShardMap[host] = []
-                    hostShardMap[host].append(shard)
-                    # kick off the s3 sync to run in the background so that we can download more files concurrently
-                    with settings(host_string=host): #, hide('output'):
-                        s3sync = ('s3cmd --progress sync s3://%s/%s /vol0/restore/%s/' % (backup, shard, backup_name))
-                        run('nohup '+s3sync+' > /vol0/restore/'+backup_name+'/s3sync-'+shard+'.log 2>&1 &', pty=False)
-                        
-        # poll each host that is downloading until the downloads are complete
-        done = 0
-        numDownloading = len(hostShardMap.keys())
-        _status('Waiting on %d hosts to download %d shard index files' % (numDownloading, len(shardDirs.keys())))            
-        while done < numDownloading:
-            done = 0 # reset the counter since we check all nodes each loop
-            _status('Sleeping for 30 seconds before checking status of S3 downloads on %d hosts' % numDownloading)
-            time.sleep(30)
-            for host in hostShardMap.keys():
-                with settings(host_string=host), hide('output', 'running', 'warnings'):
-                    pid = run('ps waux | grep s3cmd | grep -v grep | grep '+backup_name+' | awk \'{print $2}\' | sort -r')
-                    if len(pid.strip()) == 0:
-                        done += 1
-                        _info('s3cmd done on '+host)
-                    else:
-                        _status('s3cmd still running on '+host+', pid: '+pid)
-        _info('s3cmd seems to be done on '+str(numDownloading)+' hosts')
-    else:
-        # need to find where the downloaded files live
-        for shard in shardDirs.keys():
-            if ebsHost is None:
-                for host in hosts:
-                    with settings(host_string=host):
-                        found = run('find /vol0/restore/'+backup_name+' -name '+shard+' -type d | wc -l')
-                        numFound = int(found)
-                        if numFound > 0:
-                            if hostShardMap.has_key(host) is False:
-                                hostShardMap[host] = []
-                            hostShardMap[host].append(shard)
-            else:
-                if hostShardMap.has_key(ebsHost) is False:
-                    hostShardMap[ebsHost] = []
-                hostShardMap[ebsHost].append(shard)
-                
-
-        _info('hostShardMap: ')
-        print(json.dumps(hostShardMap, indent=2))
-    
-    # TODO: try to run the following commands on all nodes at once vs. synchronously
-       
-    # restore the index data for all replicas across the cluster
-    # one might think you only need to do for the leader, but then the replica
-    # would need to snap-pull from the leader anyway, so better to do all work now               
-    for host in hostShardMap.keys():
-        with settings(host_string=host), hide('output'):
-            # we'll be ssh'ing and scp'ing from the first host to the others
-            # to move files around for the restore process
-            put(_env(cluster,'ssh_keyfile_path_on_local'), '%s/.ssh' % user_home)
-            run('chmod 600 '+_env(cluster,'ssh_keyfile_path_on_local'))
-                        
-            for shard in hostShardMap[host]:                
-                _status('Restoring '+shard+' from host '+host)
-                                
-                # untar all the downloaded shardN.tar files on this host
-                #if needsDownload:            
-                #run('cd /vol0/restore/%s; cat %s-tgz-* | tar xz; rm -f %s-tgz-*' % (backup_name, shard, shard))
-                restoreFromDir = '/vol0/restore/'+backup_name if backupOnEbs is None else backupOnEbs
-                            
-                replicas = shardDirs[shard]
-                for r in replicas:                
-                    shardHost = r['host']
-                    coreDir = ('%s/cloud%s/solr/%s' % (remoteSolrDir, r['port'], r['core']))
-                    # do all the other hosts first so that we can move vs. copy on the localhost
-                    if shardHost != host:
-                        # scp
-                        sshCmd = ('ssh -o StrictHostKeyChecking=no -i %s %s@%s "mv %s/data/index %s/data/index-old; rm -rf %s/data/tlog/*"' % 
-                                  (_env(cluster,'ssh_keyfile_path_on_local'), ssh_user, shardHost, coreDir, coreDir, coreDir))
-                        run(sshCmd)
-                        _status('scp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        
-                        scpCmd = ('scp -o StrictHostKeyChecking=no -r -i %s %s/%s/* %s@%s:%s/data/index' % 
-                                  (_env(cluster,'ssh_keyfile_path_on_local'), restoreFromDir, shard, ssh_user, shardHost, coreDir))
-                        run(scpCmd)
-    
-                for r in replicas:
-                    shardHost = r['host']
-                    coreDir = ('%s/cloud%s/solr/%s' % (remoteSolrDir, r['port'], r['core']))
-                    if shardHost == host:
-                        # local copy to replica
-                        _status('cp index data for '+shard+' on '+shardHost+':'+r['port'])
-                        moveCmd = ('mv %s/data/index %s/data/index-old; cp -r %s/%s/* %s/data/index; rm -rf %s/data/tlog/*' % 
-                                   (coreDir, coreDir, restoreFromDir, shard, coreDir, coreDir))
-                        run(moveCmd)                        
-                
-    _status('Restore index data complete ... reloading collection: '+collection)          
-    urllib2.urlopen('http://%s:8984/solr/admin/collections?action=RELOAD&name=%s' % (hosts[0], collection))
-    time.sleep(10)        
-    solr = pysolr.Solr('http://%s:8984/solr/%s' % (hosts[0], collection), timeout=10)
-    results = solr.search('*:*')                
-    _info('Restore '+collection+' complete. Docs: '+str(results.hits))
-    healthcheck(cluster,collection)
-    
 def put_file(cluster,local,remotePath=None,num=1):
     """
     Upload a local file to one or more hosts in the specified cluster.
