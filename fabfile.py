@@ -1358,7 +1358,8 @@ def new_ec2_instances(cluster,
                       vpcSubnetId=None,
                       vpcSecurityGroupId=None,
                       customTags='{"CostCenter":"eng"}',
-                      rootEbsVolSize=None):
+                      rootEbsVolSize=None,
+                      mntEbsVolSize=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1480,6 +1481,8 @@ def new_ec2_instances(cluster,
             ephName = 'ephemeral%d' % s
             devName = '/dev/%s' % devs[s]
             dev_sdb = boto.ec2.blockdevicemapping.BlockDeviceType(ephemeral_name=ephName)
+            if mntEbsVolSize:
+                dev_sdb.size = int(mntEbsVolSize)
             bdm[devName] = dev_sdb
             _info('Setup Instance store BlockDeviceMapping: %s -> %s' % (devName, ephName))
     else:
