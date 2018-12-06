@@ -35,7 +35,7 @@ CLUSTER_TAG = 'cluster'
 USERNAME_TAG = 'username'
 INSTANCE_STORES_TAG = 'numInstanceStores'
 AWS_HVM_AMI_ID = 'ami-4d767836'
-AWS_AZ = 'us-east-1b'
+AWS_AZ = 'us-west-2b'
 AWS_INSTANCE_TYPE = 'r3.large'
 AWS_SECURITY_GROUP = 'solr-scale-tk'
 AWS_KEY_NAME = 'solr-scale-tk'
@@ -1246,7 +1246,7 @@ def _resolve_vpc_subnetid(cluster,az):
         _fatal('Cannot determine VPC subnet ID for launching EC2 instances in '+az+' Please set the vpc_subnetid property in your ~/.sstk file.')
     return vpcSubnetId
 
-def _defaultvpc_exists(region='us-east-1'):
+def _defaultvpc_exists(region='us-west-2'):
     vpc = boto.vpc.connect_to_region(region)
     vpc.get_all_vpcs()
     ret = False
@@ -3466,7 +3466,7 @@ def new_placement_group(cluster, name):
     if cluster.create_placement_group(name):
 	    _info('New placement group ' + name + ' created')
 
-def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
+def emr_new_cluster(cluster, region='us-west-2', subnetid=None, num='4', keep_alive=True, slave_instance_type='m1.xlarge', maxWait=600):
     """
     Provisions a new Elastic MapReduce cluster.
     """
@@ -3553,7 +3553,7 @@ def emr_new_cluster(cluster, region='us-east-1', subnetid=None, num='4', keep_al
     _save_config()
 
 
-def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-east-1'):
+def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_sample_10m', output='syn_sample_10m', reducers='12', region='us-west-2'):
     """
     Schedules a Pig job in the specified EMR cluster to download a dataset from S3 into HDFS.
     """
@@ -3578,7 +3578,7 @@ def emr_run_s3_to_hdfs_job(emrCluster, input='s3://solr-scale-tk/pig/output/syn_
     emr.add_jobflow_steps(job_flow_id, [pigStep])
 
 
-def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1'):
+def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-west-2'):
     """
     Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Solr directly.
     """
@@ -3618,7 +3618,7 @@ def emr_run_indexing_job(emrCluster, solrCluster, collection, pig='s3_to_solr.pi
 
     return stepName
 
-def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-east-1', pipeline=None, thruProxy='True'):
+def emr_fusion_indexing_job(emrCluster, fusionCluster, collection='perf', pig='s3_to_fusion.pig', input='s3://solr-scale-tk/pig/output/syn_sample_5m', batch_size='500', reducers='12', region='us-west-2', pipeline=None, thruProxy='True'):
     """
     Schedules a Pig job in the specified EMR cluster to index a dataset from S3 into Fusion.
     """
@@ -3716,7 +3716,7 @@ def gc_log_analysis_api(cluster):
                 _info(run('java -jar ' + _env(cluster, 'sstk_cloud_dir') + '/gc-log-analyzer-0.1-exe.jar -log ' + 'fusion/var/log/api/' + gclogfilename + ' -javaVers 1.7' ))
     _info("Gc log analysis complete")
 
-def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-east-1', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
+def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge', placement_group='benchmarking', region='us-west-2', maxWaitSecs=2700, yjpPath=None, yjpSolr=False, yjpFusion=False, index_solr_too=False, enable_partition=None):
     """
     Provisions a Fusion cluster (Solr + ZooKeeper + Fusion services) and an Elastic MapReduce cluster to run an indexing performance job.
 
@@ -3726,7 +3726,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         keepRunning: Set to True to keep the cluster running after the test completes, default is False (provisioned nodes will be terminated at the end of this test)
         instance_type: EC2 instance type to provision, only r3.xlarge and r3.2xlarge instances are supported, default is r3.2xlarge
         placement_group: Placement group for provisioned instances, default is benchmarking (you must create this if it doesn't exist)
-        region: The region where you want to provision instances; default is us-east-1 (Virginia data center)
+        region: The region where you want to provision instances; default is us-west-2 (Oregon data center)
         maxWaitSecs: Max number of seconds to wait for the indexing job to complete, default is 2700
         yjpPath: Path to the YourKit profiler on the remote nodes if you want to enable remote profiling in Solr or Fusion
         yjpSolr: Enable remote profiling on the Solr nodes
@@ -3858,7 +3858,7 @@ def fusion_perf_test(cluster, n=3, keepRunning=False, instance_type='r3.2xlarge'
         # terminate the EMR cluster when we're done
         terminate_jobflow(emrCluster, region)
 
-def fusion_perf_test_steps(emrCluster,cluster,collection='perf',numShards=6,repFact=1,numReducers=18,bufferSize=3000,region='us-east-1',maxWaitSecs=2700,index_solr_too=False,enable_partition=None):
+def fusion_perf_test_steps(emrCluster,cluster,collection='perf',numShards=6,repFact=1,numReducers=18,bufferSize=3000,region='us-west-2',maxWaitSecs=2700,index_solr_too=False,enable_partition=None):
 
     hosts = _lookup_hosts(cluster)
 
@@ -3920,11 +3920,11 @@ def fusion_perf_test_steps(emrCluster,cluster,collection='perf',numShards=6,repF
     # GC log analysis for fusion api service    _info("Starting gc log analysis")
     gc_log_analysis_api(cluster)
 
-def terminate_jobflow(emrCluster, region='us-east-1'):
+def terminate_jobflow(emrCluster, region='us-west-2'):
     """
     Terminates the specified Elastic MapReduce cluster and removes it from your local ~/.sstk config file
     emrCluster: Name of the cluster to terminate
-    region: The region where the cluster is running, defaults to us-east-1
+    region: The region where the cluster is running, defaults to us-west-2
     """
     emr = boto.emr.connect_to_region(region)
     job_flow_id = _lookup_emr_job_flow_id(emr, emrCluster)
@@ -4227,7 +4227,7 @@ def fusion_patch_jars(cluster, localFusionDir, jars, n=None, api=None, localVers
 
     _info('JARs uploaded and patched successfully.')
     
-def tag_emr_instances(cluster,emrCluster,purpose,project,region='us-east-1',customTags=None):
+def tag_emr_instances(cluster,emrCluster,purpose,project,region='us-west-2',customTags=None):
     ec2 = _provider_api()
     username = getpass.getuser()
 
@@ -4478,7 +4478,7 @@ spark.executor.extraClassPath      %s/%s
             _fab_append(fusionHome + '/apps/spark-dist/conf/spark-defaults.conf', sparkDefaultsConf)
 
 
-def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', maxWaitSecs=2700):
+def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-west-2', maxWaitSecs=2700):
     bufferSize = 3000
     numReducers = 18
     repFact = 1
@@ -4500,7 +4500,7 @@ def fusion_time_perf_test(cluster,emrCluster,job_flow_id,region='us-east-1', max
         # job completed ...
         _print_step_metrics(cluster, 'perf_tp', usePipeline=True)
 
-def fusion_index_signals(cluster,numReducers=18,bufferSize=3000,region='us-east-1',maxWaitSecs=7200):
+def fusion_index_signals(cluster,numReducers=18,bufferSize=3000,region='us-west-2',maxWaitSecs=7200):
 
     hosts = _lookup_hosts(cluster)
 
