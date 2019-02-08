@@ -1842,7 +1842,7 @@ def is_solr_up(cluster):
     _wait_to_see_solr_up_on_hosts(solrHostAndPorts, 5)
 
 # create a collection
-def new_collection(cluster, name, rf=1, shards=1, conf='data_driven_schema_configs', existingConfName=None):
+def new_collection(cluster, name, rf=1, shards=1, conf='_default', existingConfName=None):
     """
     Create a new collection in the specified cluster.
 
