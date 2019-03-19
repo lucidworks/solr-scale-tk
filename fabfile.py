@@ -53,7 +53,7 @@ _config['user_home'] = user_home
 _config['ssh_keyfile_path_on_local'] = ssh_keyfile_path_on_local
 _config['ssh_user'] = ssh_user
 _config['solr_java_home'] = '${user_home}/jdk1.8.0_172'
-_config['solr_tip'] = '${user_home}/solr-7.3.1'
+_config['solr_tip'] = '${user_home}/solr-7.5.0'
 _config['zk_home'] = '${user_home}/zookeeper-3.4.10'
 _config['zk_data_dir'] = zk_data_dir
 _config['sstk_cloud_dir'] = '${user_home}/cloud'
@@ -64,8 +64,8 @@ _config['AWS_AZ'] = AWS_AZ
 _config['AWS_SECURITY_GROUP'] = AWS_SECURITY_GROUP
 _config['AWS_INSTANCE_TYPE'] = AWS_INSTANCE_TYPE
 _config['AWS_KEY_NAME'] = AWS_KEY_NAME
-_config['fusion_home'] = '${user_home}/fusion/4.0.0'
-_config['fusion_vers'] = '4.0.0'
+_config['fusion_home'] = '${user_home}/fusion/4.2.0'
+_config['fusion_vers'] = '4.2.0'
 _config['connector_memory_in_gb'] = '1'
 _config['owner'] = getpass.getuser()
 
@@ -74,7 +74,8 @@ instanceStoresByType = {'m2.small':0, 't2.medium':0, 't2.large':0, 't2.xlarge':0
                         'i2.4xlarge':4,'i2.2xlarge':2, 'i2.8xlarge':8,
                         'r3.large':1, 'r3.xlarge':1, 'r3.2xlarge':1, 'r3.4xlarge':1, 'c3.2xlarge':2,
                         'r4.large':0, 'r4.xlarge':0, 'r4.2xlarge':0, 'r4.4xlarge':0, 'r4.8xlarge':0,
-                        'm4.large':0, 'm4.xlarge':0, 'm4.2xlarge':0, 'm4.4xlarge':0, 'm4.8xlarge':0 }
+                        'm4.large':0, 'm4.xlarge':0, 'm4.2xlarge':0, 'm4.4xlarge':0, 'm4.8xlarge':0,
+                        'r5d.large':1, 'r5d.xlarge':1, 'r5d.2xlarge':1, 'r5d.4xlarge':2, 'r5d.12xlarge':2}
 
 class _HeadRequest(urllib2.Request):
     def get_method(self):
@@ -253,19 +254,26 @@ def _poll_for_running_status(rsrv, maxWait=180):
 
     return len(runningSet)
 
-def _find_instances_in_cluster(cloud, cluster, onlyIfRunning=True):
+def _find_addresses_in_cluster(cloud, cluster, onlyIfRunning=True):
     tagged = {}
     byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
-    _info("find_instance by tag: {0} for cloud: {1} and cluster: {2}".format(byTag, cloud, cluster))
     for rsrv in byTag:
         for inst in rsrv.instances:
-            _info("Checking instance: {0}".format(inst))
             if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
                 if inst.public_dns_name:
                     tagged[inst.id] = inst.public_dns_name
                 elif inst.private_ip_address: #we may be launching in a private subnet
                     tagged[inst.id] = inst.private_ip_address
 
+    return tagged
+
+def _find_instances_in_cluster(cloud, cluster, onlyIfRunning=True):
+    tagged = {}
+    byTag = cloud.get_all_instances(filters={'tag:' + CLUSTER_TAG:cluster})
+    for rsrv in byTag:
+        for inst in rsrv.instances:
+            if (onlyIfRunning and inst.state == 'running') or onlyIfRunning is False:
+                tagged[inst.id] = inst
     return tagged
 
 def _find_all_instances(cloud, onlyIfRunning=True):
@@ -339,14 +347,22 @@ def _cluster_hosts(cloud, cluster):
     _info("Cluster Hosts: {0}".format(clusterHosts))
     if clusterHosts is None:
         # not cached locally ... must hit provider API
-        clusterHosts = []
+        sorted_hosts = []
         taggedInstances = _find_instances_in_cluster(cloud, cluster)
         for key in taggedInstances.keys():
-            clusterHosts.append(taggedInstances[key])
-        if len(clusterHosts) == 0:
+            inst = taggedInstances[key]
+            if inst.state != 'running':
+                continue
+            sorted_hosts.append({'host':inst.public_dns_name, 'zone':inst.placement})
+
+        if len(sorted_hosts) == 0:
             _fatal('No active hosts found for cluster ' + cluster + '! Check your command line args and re-try')
+
         # use a predictable order each time
-        clusterHosts.sort()
+        sorted_hosts.sort(key=lambda x: x['zone']+x['host'], reverse=False)
+        clusterHosts = []
+        for next in sorted_hosts:
+            clusterHosts.append(next['host'])
 
     # setup the Fabric env for SSH'ing to this cluster
     ssh_user = _env(cluster, 'ssh_user')
@@ -424,18 +440,24 @@ log4j.logger.org.apache.solr.update.processor.LogUpdateProcessor=WARN
 '''
     return cfg
 
-def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, privateVPC, yjp_path=None):
+def _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, privateVPC, yjp_path=None, solrOpts=None):
+
+    solrZone = ""
 
     provider = _env(cluster, 'provider')
     if provider == "local":
         solrHost = "localhost"
     else:
+        solrZone = "`curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone`"
         _info("Using Private VPC: {0} for cluster: {1}".format(privateVPC, cluster))
         if privateVPC is False:
             solrHost = '`curl -s http://169.254.169.254/latest/meta-data/public-hostname`'
         else:
             #we don't have a public name, get the local
             solrHost = '`curl -s http://169.254.169.254/latest/meta-data/local-ipv4`'
+
+    if solrOpts is None:
+        solrOpts = ''
 
     solrInSh = ('''#!/bin/bash
 SOLR_JAVA_HOME="%s"
@@ -490,9 +512,9 @@ SOLR_HOST=%s
 # (recommended in production environments)
 ENABLE_REMOTE_JMX_OPTS="true"
 
-SOLR_OPTS="$SOLR_OPTS -Dsolr.autoCommit.maxTime=30000 -Dsolr.autoSoftCommit.maxTime=3000"
-
-''' % (remoteSolrJavaHome, solrJavaMemOpts, zkHost, solrHost))
+SOLR_ZONE=%s
+SOLR_OPTS="$SOLR_OPTS -Dsolr_zone=$SOLR_ZONE -Dsolr.autoCommit.maxTime=30000 -Dsolr.autoSoftCommit.maxTime=3000%s"
+''' % (remoteSolrJavaHome, solrJavaMemOpts, zkHost, solrHost, solrZone, solrOpts))
 
     if yjp_path is not None:
         solrInSh += 'SOLR_OPTS="$SOLR_OPTS -agentpath:'+yjp_path+'/bin/linux-x86-64/libyjpagent.so"\n'
@@ -502,7 +524,7 @@ SOLR_OPTS="$SOLR_OPTS -Dsolr.autoCommit.maxTime=30000 -Dsolr.autoSoftCommit.maxT
 
 def _get_zk_hosts(cloud, zk):
     zkHosts = []
-    zkInstances = _find_instances_in_cluster(cloud, zk)
+    zkInstances = _find_addresses_in_cluster(cloud, zk)
     for key in zkInstances.keys():
         zkHosts.append(zkInstances[key] + ':2181')
     return zkHosts
@@ -770,7 +792,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '512m'
-    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large' or instance_type == 'c3.2xlarge' or instance_type == 'r4.large':
+    elif instance_type == 'm3.xlarge' or instance_type == 'r3.large' or instance_type == 'c3.2xlarge' or instance_type == 'r4.large' or instance_type == 'r5d.large':
         if numNodesPerHost == 1:
             mx = '6g'
         elif numNodesPerHost == 2:
@@ -784,7 +806,7 @@ def _get_solr_java_memory_opts(instance_type, numNodesPerHost):
         else:
             showWarn = True
             mx = '640m'
-    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r3.2xlarge':
+    elif instance_type == 'm3.2xlarge' or instance_type == 'r3.xlarge' or instance_type == 'r3.2xlarge' or instance_type == 'r5d.xlarge' or instance_type == 'r5d.2xlarge':
         if numNodesPerHost == 1:
             mx = '8g'
         elif numNodesPerHost == 2:
@@ -1395,7 +1417,8 @@ def new_ec2_instances(cluster,
                       vpcSecurityGroupId=None,
                       customTags='{"CostCenter":"eng"}',
                       rootEbsVolSize=None,
-                      mntEbsVolSize=None):
+                      mntEbsVolSize=None,
+                      zones=None):
 
     """
     Launches one or more instances in EC2; each instance is tagged with a cluster id and username.
@@ -1424,6 +1447,8 @@ def new_ec2_instances(cluster,
       vpcSubnetId (optional): VPC sub-net ID, defaults to the config value for vpc_subnetid in ~/.sstk
       rootEbsVolSize (optional): Used to re-size the root EBS volume for each instance, otherwise uses the
         size configured when the AMI was built.
+      zones (optional): A comma-delimited list of az=subnet mappings to spread the instances across multiple zones
+        If you use this option, then n instances per zone are created vs. n instances total
 
     Returns:
       hosts (list): A list of public DNS names for the instances launched by this command.
@@ -1440,6 +1465,7 @@ def new_ec2_instances(cluster,
 
     if key is None:
         key = _env(cluster, 'AWS_KEY_NAME')
+    sshKeyName = key
 
     if az is None:
         az = _env(cluster, 'AWS_AZ')
@@ -1459,12 +1485,10 @@ def new_ec2_instances(cluster,
     ec2 = _provider_api(cluster)
     num = int(n)
 
-    _status('Going to launch %d new EC2 %s instances using AMI %s' % (num, instance_type, ami))
-
     username = getpass.getuser()
 
     # verify no cluster with the same ID already exists with running instances
-    existing = _find_instances_in_cluster(ec2, cluster, True)
+    existing = _find_addresses_in_cluster(ec2, cluster, True)
     if len(existing) > 0:
         if confirm('Found %d running instances for cluster %s, do you want re-use this cluster?' % (len(existing), cluster)):
             hosts = _cluster_hosts(ec2, cluster)
@@ -1538,9 +1562,19 @@ def new_ec2_instances(cluster,
     if placement_group is not None and not(placement_group in pgnamelist):
         new_placement_group(ec2, placement_group)
 
-    # Using a VPC is required now in order to simplify working with EC2 (too many problems trying to support both)
-    if vpcSubnetId is None:
-        vpcSubnetId = _resolve_vpc_subnetid(cluster, az)
+    zone_list = []
+    if zones is not None:
+        for zone in zones.strip().split(";"):
+            zone_pair = zone.strip().split("|")
+            zone_list.append({'zone':zone_pair[0].strip(), 'subnet':zone_pair[1].strip()})
+        _status("Using multiple zones: "+json.dumps(zone_list))
+    else:
+        # Using a VPC is required now in order to simplify working with EC2 (too many problems trying to support both)
+        if vpcSubnetId is None:
+            vpcSubnetId = _resolve_vpc_subnetid(cluster, az)
+        zone_list.append({'zone':az, 'subnet':vpcSubnetId})
+
+    _status('Going to launch %d new EC2 %s instances across %d zones using AMI %s' % (num*len(zone_list), instance_type, len(zone_list), ami))
 
     if vpcSecurityGroupId is None:
         vpcSecurityGroupId = _env(cluster, "vpc_security_group_id", "")
@@ -1570,76 +1604,83 @@ def new_ec2_instances(cluster,
     if customTags is not None:
         customTagsJson = json.loads(customTags)
 
-    args = dict()
-    args['ImageId'] = ami
-    args['MinCount'] = num
-    args['MaxCount'] = num
-    args['InstanceType'] = instance_type
-    args['KeyName'] = key
-    args['Monitoring'] = {'Enabled': True}
-    args['Placement'] = {'AvailabilityZone': az}
-    args['SubnetId'] = vpcSubnetId
-    args['SecurityGroupIds'] = [vpcSecurityGroupId]
-    args['TagSpecifications'] = [{
-        'ResourceType': 'instance',
-        'Tags': []
-    }]
-    tags = {
-        'CostCenter': 'eng',
-        'Name': cluster,
-        CLUSTER_TAG: cluster,
-        USERNAME_TAG: username,
-        'Owner': owner,
-        'Description': description,
-        'Purpose': purpose,
-        'Project': project,
-        INSTANCE_STORES_TAG: numStores
-    }
-    if customTagsJson is not None:
-        for tagName, tagValue in customTagsJson.iteritems():
-            tags[tagName] = tagValue
-    for key in tags:
-        args["TagSpecifications"][0]["Tags"].append({"Key": key, "Value": str(tags[key])})
-    if bdm:
-        BlockDeviceMappings = []
-        for device_name, mapping in bdm.iteritems():
-            device = {'DeviceName': device_name, 'Ebs': dict()}
-            if mapping.ephemeral_name:
-                device['VirtualName'] = mapping.ephemeral_name
-            if mapping.no_device:
-                device['NoDevice'] = mapping.no_device
-            if mapping.snapshot_id:
-                device['Ebs']['SnapshotId'] = mapping.snapshot_id
-            if mapping.delete_on_termination:
-                device['Ebs']['DeleteOnTermination'] = mapping.delete_on_termination
-            if mapping.size:
-                device['Ebs']['VolumeSize'] = mapping.size
-            if mapping.volume_type:
-                device['Ebs']['VolumeType'] = mapping.volume_type
-            if mapping.iops:
-                device['Ebs']['Iops'] = mapping.iops
-            if mapping.encrypted:
-                device['Ebs']['Encrypted'] = mapping.encrypted
-            BlockDeviceMappings.append(device)
-        args['BlockDeviceMappings'] = BlockDeviceMappings
-    if placement_group:
-        args['Placement']['GroupName'] = placement_group
-    _info('Launching '+str(num)+' EC2 instances with args ' + str(args))
+    sstk_cfg = _get_config()
+    if sstk_cfg.has_key('region'):
+        region = sstk_cfg['region']
+    else:
+        region = zone_list[0]['zone'][:-1]
 
-    region = az[:-1]
-    rsrv = boto3.resource('ec2', region_name=region).create_instances(**args)
-    _info(rsrv)
+    for z in zone_list:
+        _status('Deploying '+str(num)+' instances in '+z['zone']+', region: '+region+', subnet: '+z['subnet']+' ...')
+        args = dict()
+        args['ImageId'] = ami
+        args['MinCount'] = num
+        args['MaxCount'] = num
+        args['InstanceType'] = instance_type
+        args['KeyName'] = sshKeyName
+        args['Monitoring'] = {'Enabled': True}
+        args['Placement'] = {'AvailabilityZone': z['zone']}
+        args['SubnetId'] = z['subnet']
+        args['SecurityGroupIds'] = [vpcSecurityGroupId]
+        args['TagSpecifications'] = [{'ResourceType': 'instance','Tags': []}]
+        tags = {
+            'CostCenter': 'eng',
+            'Name': cluster,
+            CLUSTER_TAG: cluster,
+            USERNAME_TAG: username,
+            'Owner': owner,
+            'Description': description,
+            'Purpose': purpose,
+            'Project': project,
+            INSTANCE_STORES_TAG: numStores
+        }
+        if customTagsJson is not None:
+            for tagName, tagValue in customTagsJson.iteritems():
+                tags[tagName] = tagValue
+        for tk in tags:
+            args["TagSpecifications"][0]["Tags"].append({"Key": tk, "Value": str(tags[tk])})
 
-    time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
+        if bdm:
+            BlockDeviceMappings = []
+            for device_name, mapping in bdm.iteritems():
+                device = {'DeviceName': device_name, 'Ebs': dict()}
+                if mapping.ephemeral_name:
+                    device['VirtualName'] = mapping.ephemeral_name
+                if mapping.no_device:
+                    device['NoDevice'] = mapping.no_device
+                if mapping.snapshot_id:
+                    device['Ebs']['SnapshotId'] = mapping.snapshot_id
+                if mapping.delete_on_termination:
+                    device['Ebs']['DeleteOnTermination'] = mapping.delete_on_termination
+                if mapping.size:
+                    device['Ebs']['VolumeSize'] = mapping.size
+                if mapping.volume_type:
+                    device['Ebs']['VolumeType'] = mapping.volume_type
+                if mapping.iops:
+                    device['Ebs']['Iops'] = mapping.iops
+                if mapping.encrypted:
+                    device['Ebs']['Encrypted'] = mapping.encrypted
+                BlockDeviceMappings.append(device)
+            args['BlockDeviceMappings'] = BlockDeviceMappings
+        if placement_group:
+            args['Placement']['GroupName'] = placement_group
 
-    for inst in rsrv:
-        inst.wait_until_running()
+        _info('Launching '+str(num)+' EC2 instances in '+str(z['zone'])+' with args ' + str(args))
+        rsrv = boto3.resource('ec2', region_name=region).create_instances(**args)
+        _info(rsrv)
+
+        time.sleep(10) # sometimes the AWS API is a little sluggish in making these instances available to this API
+
+        for inst in rsrv:
+            inst.wait_until_running()
+        _info(str(num)+' instances in '+z['zone']+' are running.')
 
     time.sleep(5)
 
     # Sets the env.hosts param to contain the hosts we just launched; helps when chaining Fabric commands
     hosts = _cluster_hosts(ec2, cluster)
     ec2.close()
+
     _info("Hosts: {0}".format(hosts))
 
     # don't return from this operation until we can SSH into each node
@@ -1666,7 +1707,7 @@ def new_ec2_instances(cluster,
 
     return hosts
 
-def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solrJavaMemOpts=None):
+def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solrJavaMemOpts=None, zkAssign=None):
     """
     Configures and starts a SolrCloud cluster on machines identified by the cluster parameter.
     SolrCloud is configured to connect to an existing ZooKeeper ensemble or boostrap a single
@@ -1699,14 +1740,22 @@ def setup_solrcloud(cluster, zk=None, zkn=1, nodesPerHost=1, yjp_path=None, solr
 
     # setup/start zookeeper
     zkHosts = []
-    if zk is None:
-        # just run 1 node on the first host
-        numZkNodes = int(zkn) if zkn is not None else 1
-        if numZkNodes > len(hosts):
-            _warn('Number of requested local ZooKeeper nodes %d exceeds number of available hosts! Using %d instead.' % (numZkNodes, len(hosts)))
-        zkHosts = _zk_ensemble(cluster, hosts[0:numZkNodes])
+    if zkAssign is not None:
+        zka = zkAssign.split(' ')
+        zkh = []
+        for idx in zka:
+            zkh.append(hosts[int(idx)])
+        _status('Launching ZK on hosts: '+json.dumps(zkh))
+        zkHosts = _zk_ensemble(cluster, zkh)
     else:
-        zkHosts = _get_zk_hosts(cloud, zk)
+        if zk is None:
+            # just run 1 node on the first host
+            numZkNodes = int(zkn) if zkn is not None else 1
+            if numZkNodes > len(hosts):
+                _warn('Number of requested local ZooKeeper nodes %d exceeds number of available hosts! Using %d instead.' % (numZkNodes, len(hosts)))
+            zkHosts = _zk_ensemble(cluster, hosts[0:numZkNodes])
+        else:
+            zkHosts = _get_zk_hosts(cloud, zk)
 
     if len(zkHosts) == 0:
         _fatal('No ZooKeeper hosts found!')
@@ -1741,8 +1790,12 @@ export SOLR_JAVA_MEM="%s"
 
     is_private = _is_private_subnet(cluster)
     # write the include file for the bin/solr script
-    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path)
+    solrOpts = " -Dnode_type=search"
+    solrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path, solrOpts=solrOpts)
     solrInShPath = remoteSolrDir+'/bin/solr.in.sh'
+
+    altSolrOpts = " -Dnode_type=analytics"
+    altSolrInSh = _get_solr_in_sh(cluster, remoteSolrJavaHome, solrJavaMemOpts, zkHost, is_private, yjp_path=yjp_path, solrOpts=altSolrOpts)
 
     sstkEnvScript = _env(cluster, 'SSTK_ENV')
     sstkScript = _env(cluster, 'SSTK')
@@ -1751,7 +1804,8 @@ export SOLR_JAVA_MEM="%s"
     solrTip = _env(cluster, 'solr_tip')
     solrVersion = os.path.basename(solrTip).split("-")[1]
 
-    for host in hosts:
+    for h in range(0,len(hosts)):
+        host = hosts[h]
         with settings(host_string=host), hide('output', 'running'):
             run('mkdir -p '+cloudDir+' || true')
             run('rm -f ' + sstkEnvScript)
@@ -1760,7 +1814,10 @@ export SOLR_JAVA_MEM="%s"
             put('./'+CTL_SCRIPT, cloudDir)
             run('chmod +x ' + sstkScript)
             run('rm -f '+solrInShPath)
-            _fab_append(solrInShPath, solrInSh)
+            if h % 2 == 0:
+                _fab_append(solrInShPath, solrInSh)
+            else:
+                _fab_append(solrInShPath, altSolrInSh)
 
     #Bootstrap ZK
     if StrictVersion(solrVersion) >= StrictVersion("6.4.2"):
@@ -1956,7 +2013,7 @@ def kill(cluster):
     Terminate all running nodes of the specified cluster.
     """
     cloud = _provider_api(cluster)
-    taggedInstances = _find_instances_in_cluster(cloud, cluster)
+    taggedInstances = _find_addresses_in_cluster(cloud, cluster)
     instance_ids = taggedInstances.keys()
     if confirm('Found %d instances to terminate, continue? ' % len(instance_ids)):
         cloud.terminate_instances(instance_ids)
@@ -2079,7 +2136,7 @@ def mine(user=None):
         inst = instances[key]
         if inst.state != 'running':
             continue
-        
+
         usertag = inst.__dict__['tags']['username']
         if usertag is None:
             usertag = '?user?'
@@ -2102,8 +2159,8 @@ def mine(user=None):
 
         if inst.launch_time:
             upTime = _uptime(inst.launch_time)
-            clusters[cluster].append('%s (private: %s): %s / %s / %s (%s %s%s)' %
-              (inst.public_dns_name, inst.private_ip_address, key, inst.private_ip_address, nameTag, inst.instance_type, inst.state, upTime))
+            clusters[cluster].append('%s: %s (private: %s): %s / %s / %s (%s %s%s)' %
+              (inst.placement, inst.public_dns_name, inst.private_ip_address, key, inst.private_ip_address, nameTag, inst.instance_type, inst.state, upTime))
 
         clusterList.append(cluster)
 
@@ -2121,7 +2178,7 @@ def mine(user=None):
                     clusterList.append(clusterId)
 
     for u in byUser.keys():
-        clusters = byUser[u]    
+        clusters = byUser[u]
         for c in clusters.keys():
             clusters[c].sort() # sort so that the ssh_to indexes line up
         print('\n*** user: '+u+' ***')    
@@ -2810,9 +2867,11 @@ group.default = api, connectors-rpc, connectors-classic, proxy, webapps, admin-u
 default.address = {3}
 default.gc = cms
 default.gcLog = true
-default.supervision.type = standard
+default.supervision.type = none
 default.timezone=UTC
 default.startSecs=360
+default.collectMetrics = true
+default.collectMetricsIntervalSecs = 30
 
 # Agent process
 agent.port = 8091
@@ -2820,7 +2879,7 @@ agent.port = 8091
 # API service
 api.port = 8765
 api.stopPort = 7765
-api.jvmOptions={2} -Xss256k -Djava.rmi.server.hostname={3} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true -Dhttp.maxConnections=1000
+api.jvmOptions={2} -Xss256k -DrunSparkDriver=false -Djava.rmi.server.hostname={3} -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=18765 -Dcom.sun.management.jmxremote.rmi.port=18765 -Dapple.awt.UIElement=true -Dhttp.maxConnections=1000
 api.startSecs=420
 
 # Connectors RPC service
@@ -2844,17 +2903,21 @@ solr.port = 8983
 solr.stopPort = 7983
 solr.jvmOptions = -Xmx2g -Xss256k
 
+"""
+
+    staticProps = """
+
 # Spark master
-spark-master.port = 8766
-spark-master.uiPort = 8767
-spark-master.jvmOptions = -Xmx512m
-spark-master.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3}
+spark-master.port = ${SPARK_MASTER_PORT:-8766}
+spark-master.uiPort = ${SPARK_MASTER_UI_PORT:-8767}
+spark-master.jvmOptions = -Xmx${SPARK_MASTER_MEM:-512m}
+spark-master.envVars={"SPARK_HOME": "${sparkHome}", "HADOOP_HOME": "${hadoopHome}", "SPARK_SCALA_VERSION": "2.11", "SPARK_PUBLIC_DNS": "${default.address}", "SPARK_LOCAL_IP": "${default.address}"}
 
 # Spark worker
-spark-worker.port = 8769
+spark-worker.port = ${SPARK_WORKER_PORT:-8769}
 spark-worker.uiPort = 8770
-spark-worker.jvmOptions = -Xmx1g
-spark-worker.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3},SPARK_WORKER_CORES=12
+spark-worker.jvmOptions = -Xmx${SPARK_WORKER_MEM:-1g}
+spark-worker.envVars={"SPARK_HOME": "${sparkHome}", "HADOOP_HOME": "${hadoopHome}", "SPARK_WORKER_CORES": "12", "SPARK_SCALA_VERSION": "2.11", "SPARK_PUBLIC_DNS": "${default.address}", "SPARK_LOCAL_IP": "${default.address}"}
 
 # Admin UI
 admin-ui.port = 8763
@@ -2873,7 +2936,7 @@ proxy.jvmOptions = -Xmx512m
 # SQL engine
 sql.port = 8768
 sql.jvmOptions = -Xmx1g
-sql.envVars=SPARK_SCALA_VERSION=2.11,SPARK_PUBLIC_DNS={3},SPARK_LOCAL_IP={3}
+sql.envVars={"SPARK_HOME": "${sparkHome}", "HADOOP_HOME": "${hadoopHome}", "SPARK_SCALA_VERSION": "2.11", "SPARK_PUBLIC_DNS": "${default.address}", "SPARK_LOCAL_IP": "${default.address}"}
 
 # Webapps Server
 webapps.port = 8780
@@ -2953,6 +3016,7 @@ fi
     for host in hosts:
         with settings(host_string=host), hide('output','running'):
             fusionAgentProps = agentPropsTemplate.format(fusionZk, zkHost, apiJavaOpts, host, connMemory)
+            fusionAgentProps += staticProps
             run('mv '+fusionConf+'/fusion.properties '+fusionConf+'/fusion.properties.bak || true')
             _status('Uploading fusion.properties file to '+host)
             _fab_append(fusionConf+'/fusion.properties', fusionAgentProps)
@@ -3037,13 +3101,13 @@ fi
                 time.sleep(10)
                 _info('Started Spark-Worker service on '+host)
 
-    _status('Starting Fusion Log Shipper service on ALL nodes.')
-    for host in hosts:
-        with settings(host_string=host), hide('output', 'running'):
-            run(fusionBin+'/log-shipper stop || true')
-            _runbg(fusionBin+'/log-shipper restart', fusionLogs+'/log-shipper/restart.out')
-            time.sleep(10)
-            _info('Started Fusion Log Shipper service on '+host)
+    #_status('Starting Fusion Log Shipper service on ALL nodes.')
+    #for host in hosts:
+    #    with settings(host_string=host), hide('output', 'running'):
+    #        run(fusionBin+'/log-shipper stop || true')
+    #        _runbg(fusionBin+'/log-shipper restart', fusionLogs+'/log-shipper/restart.out')
+    #        time.sleep(10)
+    #        _info('Started Fusion Log Shipper service on '+host)
 
 
 def fusion_stop(cluster):
@@ -3724,6 +3788,22 @@ def clear_collection(cluster,collection,deleteByQuery='*:*'):
     except urllib2.HTTPError as e:
         _error('POST to '+clearUrl+' failed due to: '+str(e)+'\n'+e.read())
 
+def throughput(url):
+    timestampField = '_version_'
+    solr = pysolr.Solr(url, timeout=10)
+    results = solr.search('*:*', **{'sort':timestampField+' ASC','rows':1,'fl':'_version_'})
+    if results.hits <= 0:
+        _error('No results found in Solr at url: '+url)
+
+    earliestTime = long(results.docs[0][timestampField])
+    results = solr.search('*:*', **{'sort':timestampField+' DESC','rows':1,'fl':'_version_'})
+    latestTime = long(results.docs[0][timestampField])
+    duration = (latestTime-earliestTime)/1000000000 # nanos
+    tp = 0
+    if duration > 0:
+        tp = results.hits / duration
+
+    print('docs: '+str(results.hits)+', secs: '+str(duration)+', docs/sec: '+str(tp))
 
 def solr_indexing_throughput(url):
     timestampField = 'indexed_at_tdt'
